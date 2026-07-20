@@ -1,0 +1,221 @@
+   150	  const startAttendanceProcess = async (type: 'IN' | 'OUT') => {
+   151	    if (type === 'IN' && hasMarkedIn) return;
+   152	    if (type === 'OUT' && hasMarkedOut) return;
+   153	    if (!centerInfo) {
+   154	      alert("Center information not loaded yet.");
+   155	      return;
+   156	    }
+   157	
+   158	    setAttendanceType(type);
+   159	    setLocationLoading(true);
+   160	    
+   161	    const reverseGeocode = async (lat: number, lng: number) => {
+   162	      try {
+   163	        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
+   164	        const data = await res.json();
+   165	        return data.display_name || "Location found";
+   166	      } catch (err) {
+   167	        return "Unknown Address";
+   168	      }
+   169	    };
+   170	
+   171	    const processLocation = async (lat: number, lng: number, accuracy: number) => {
+   172	       const address = await reverseGeocode(lat, lng);
+   173	       const googleMapsLink = `https://www.google.com/maps?q=${lat},${lng}`;
+   174	       let distance = null;
+   175	       if (centerInfo.latitude && centerInfo.longitude) {
+   176	         distance = getDistanceFromLatLonInM(centerInfo.latitude, centerInfo.longitude, lat, lng);
+   177	       }
+   178	
+   179	       setLocationInfo({
+   180	          lat, lng, address, googleMapsLink, distance, accuracy
+   181	       });
+   182	
+   183	       setLocationLoading(false);
+   184	       
+   185	       const radius = centerInfo.geofenceRadius || 100;
+   186	       
+   187	       if (distance !== null && distance > radius) {
+   188	          setIsODSubmission(true);
+   189	          setShowOfficialDuty(true);
+   190	       } else {
+   191	          setIsODSubmission(false);
+   192	          setShowCamera(true);
+   193	          startCamera();
+   194	       }
+   195	    };
+   196	
+   197	    const attemptTestModeFallback = async () => {
+   198	      if (import.meta.env.PROD) {
+   199	        alert("Location Permission Denied. GPS Location must always be required in production.");
+   200	        setLocationLoading(false);
+   201	        return;
+   202	      }
+   203	      try {
+   204	        const settingsDoc = await getDoc(doc(db, 'settings', 'appSettings'));
+   205	        const isTestMode = settingsDoc.exists() ? settingsDoc.data().testMode : false;
+   206	        if (isTestMode) {
+   207	          const centerLat = centerInfo.latitude || 0;
+   208	          const centerLng = centerInfo.longitude || 0;
+   209	          await processLocation(centerLat, centerLng, 10);
+   210	        } else {
+   211	          alert("Location Permission Denied");
+   212	          setLocationLoading(false);
+   213	        }
+   214	      } catch (err) {
+   215	        alert("Location Permission Denied");
+   216	        setLocationLoading(false);
+   217	      }
+   218	    };
+   219	
+   220	    if (!navigator.geolocation) {
+   221	      await attemptTestModeFallback();
+   222	      return;
+   223	    }
+   224	
+   225	    navigator.geolocation.getCurrentPosition(
+   226	      async (position) => {
+   227	        const { latitude, longitude, accuracy } = position.coords;
+   228	        await processLocation(latitude, longitude, accuracy);
+   229	      },
+   230	      (error) => {
+   231	        attemptTestModeFallback();
+   232	      },
+   233	      { enableHighAccuracy: true }
+   234	    );
+   235	  };
+   236	
+   237	  const startCamera = async () => {
+   238	    try {
+   239	      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+   240	      if (videoRef.current) {
+   241	        videoRef.current.srcObject = stream;
+   242	      }
+   243	    } catch (err) {
+   244	      console.error("Camera error:", err);
+   245	      alert("Camera permission denied or camera not available.");
+   246	      setShowCamera(false);
+   247	      setShowOfficialDuty(false);
+   248	    }
+   249	  };
+   250	
+   251	  const stopCamera = () => {
+   252	    if (videoRef.current && videoRef.current.srcObject) {
+   253	      const stream = videoRef.current.srcObject as MediaStream;
+   254	      stream.getTracks().forEach(track => track.stop());
+   255	    }
+   256	  };
+   257	
+   258	  const captureAndSubmit = async (isOfficialDuty = false) => {
+   259	    if (!videoRef.current || !canvasRef.current || !locationInfo) return;
+   260	    setSubmitting(true);
+   261	
+   262	    try {
+   263	      const video = videoRef.current;
+   264	      const canvas = canvasRef.current;
+   265	      canvas.width = video.videoWidth;
+   266	      canvas.height = video.videoHeight;
+   267	      const ctx = canvas.getContext('2d');
+   268	      if (ctx) {
+   269	        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+   270	        
+   271	        // Draw Timestamp on Image
+   272	        const today = new Date();
+   273	        const dateTimeStr = today.toLocaleString();
+   274	        ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+   275	        ctx.fillRect(0, canvas.height - 50, canvas.width, 50);
+   276	        ctx.fillStyle = "white";
+   277	        ctx.font = "14px sans-serif";
+   278	        ctx.fillText(dateTimeStr, 10, canvas.height - 30);
+   279	        ctx.fillText(locationInfo.address.substring(0, 50) + '...', 10, canvas.height - 12);
+   280	      }
+   281	      
+   282	      const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+   283	      
+   284	      // Upload to Storage
+   285	      const storageRef = ref(storage, `attendance_selfies/${staffData.uid}_${attendanceType}_${Date.now()}.jpg`);
+   286	      await uploadString(storageRef, dataUrl, 'data_url');
+   287	      const photoUrl = await getDownloadURL(storageRef);
+   288	
+   289	      const today = new Date();
+   290	      const dateStr = today.toLocaleDateString('en-CA');
+   291	      const timeStr = today.toLocaleTimeString('en-US', { hour12: false });
+   292	
+   293	      if (attendanceType === 'IN') {
+   294	        const newRecord = {
+   295	          staffUid: staffData.uid,
+   296	          'Staff ID': staffData.staffId,
+   297	          'Staff Name': staffData.name,
+   298	          'Center Code': centerInfo?.code || '',
+   299	          'Center Name': centerInfo?.name || '',
+   300	          'Center Latitude': centerInfo?.latitude || null,
+   301	          'Center Longitude': centerInfo?.longitude || null,
+   302	          'Geofence Radius': centerInfo?.geofenceRadius || 100,
+   303	          'Date': dateStr,
+   304	          date: dateStr,
+   305	          'IN Time': timeStr,
+   306	          'Latitude': locationInfo.lat,
+   307	          'Longitude': locationInfo.lng,
+   308	          'Location Accuracy': locationInfo.accuracy,
+   309	          'Distance From Center': locationInfo.distance,
+   310	          'Full Address': locationInfo.address,
+   311	          'Google Maps Link': locationInfo.googleMapsLink,
+   312	          'Device ID': deviceId,
+   313	          'Attendance Status': 'Pending Approval',
+   314	          'Official Duty Status': 'Pending',
+   315	          'Official Duty Reason': odReason,
+   316	          'Official Duty Location': odLocation,
+   317	          'Official Duty Remarks': odRemarks,
+   318	          timestamp: serverTimestamp()
+   319	        };
+   320	        const docRef = await addDoc(collection(db, 'attendance'), newRecord);
+   321	        setAttendanceRecord({ id: docRef.id, ...newRecord });
+   322	        alert("Official Duty Request Submitted Successfully");
+   323	      } else if (attendanceType === 'OUT' && attendanceRecord?.id) {
+   324	        const updateData = {
+   325	          'OUT Time': timeStr,
+   326	          'OUT Latitude': locationInfo.lat,
+   327	          'OUT Longitude': locationInfo.lng,
+   328	          'OUT Location Accuracy': locationInfo.accuracy,
+   329	          'OUT Distance From Center': locationInfo.distance,
+   330	          'OUT Full Address': locationInfo.address,
+   331	          'OUT Google Maps Link': locationInfo.googleMapsLink,
+   332	          'Attendance Status': 'Pending Approval',
+   333	          'OUT Official Duty Status': 'Pending',
+   334	          'OUT Official Duty Reason': odReason,
+   335	          'OUT Official Duty Location': odLocation,
+   336	          'OUT Official Duty Remarks': odRemarks,
+   337	        };
+   338	        await updateDoc(doc(db, 'attendance', attendanceRecord.id), updateData);
+   339	        setAttendanceRecord({ ...attendanceRecord, ...updateData });
+   340	        alert("OUT Official Duty Request Submitted Successfully");
+   341	      }
+   342	      setShowOfficialDuty(false);
+   343	    } catch (err) {
+   344	      console.error(err);
+   345	      alert("Failed to submit Official Duty Request.");
+   346	    } finally {
+   347	      setSubmitting(false);
+   348	    }
+   349	  };
+   350	
+   351	  const closeCamera = () => {
+   352	    stopCamera();
+   353	    setShowCamera(false);
+   354	  };
+   355	
+   356	  if (!staffData) return null;
+   357	
+   358	  let statusColor = 'bg-slate-50 text-slate-600 border-slate-200';
+   359	  let statusText = 'Not Marked';
+   360	  let statusBg = 'bg-slate-100';
+   361	  
+   362	  if (hasMarkedOut) {
+   363	    statusColor = 'bg-red-50 text-red-600 border-red-200';
+   364	    statusText = '🔴 OUT ATTENDANCE';
+   365	    statusBg = 'bg-red-50';
+   366	  } else if (hasMarkedIn) {
+   367	    if (attendanceRecord['Attendance Status'] === 'Rejected') {
+   368	       statusColor = 'bg-red-50 text-red-600 border-red-200';
+   369	       statusText = '🔴 REJECTED OD';
+   370	       statusBg = 'bg-red-50';

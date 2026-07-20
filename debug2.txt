@@ -1,0 +1,1653 @@
+     1	import React, { useEffect, useState, useRef } from 'react';
+     2	import {  useNavigate } from 'react-router-dom';
+     3	import {  ArrowLeft, LogOut, Calendar, User, Clock, MapPin, CheckCircle2, Camera, X, Headset, AlertTriangle, RefreshCw , FileText} from 'lucide-react';
+     4	import { useSync } from "./SyncContext";
+     5	import LiveCamera from './LiveCamera';
+     6	import {  motion, AnimatePresence } from 'motion/react';
+     7	import AttendanceSuccessModal from './AttendanceSuccessModal';
+     8	import {  db, storage } from '../firebase';
+     9	import {  sendCenterNotification } from '../utils/notificationService';
+    10	import {  collection, query, where, getDocs, addDoc, serverTimestamp, getDoc, doc, updateDoc, onSnapshot, getDocsFromCache, getDocFromCache } from 'firebase/firestore';
+    11	import {  ref, uploadString, getDownloadURL } from 'firebase/storage';
+    12	import {  compressImage } from '../utils/imageCompression';
+    13	import {  saveOfflineRecord, syncOfflineRecords, getOfflineRecords } from '../utils/offlineSync';
+    14	import {  uploadWithRetry } from '../utils/uploadHelpers';
+    15	
+    16	function getDistanceFromLatLonInM(lat1: number, lon1: number, lat2: number, lon2: number) {
+    17	  var R = 6371;
+    18	  var dLat = deg2rad(lat2-lat1);
+    19	  var dLon = deg2rad(lon2-lon1); 
+    20	  var a = 
+    21	    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    22	    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
+    23	    Math.sin(dLon/2) * Math.sin(dLon/2)
+    24	    ; 
+    25	  var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+    26	  var d = R * c * 1000;
+    27	  return Math.round(d);
+    28	}
+    29	
+    30	function deg2rad(deg: number) {
+    31	  return deg * (Math.PI/180)
+    32	}
+    33	
+    34	export default function StaffDashboardScreen() {
+    35	  const navigate = useNavigate();
+    36	  const { isOnline } = useSync();
+    37	  const [staffData, setStaffData] = useState<any>(null);
+    38	  const [centerInfo, setCenterInfo] = useState<any>(null);
+    39	  
+    40	  const [loading, setLoading] = useState(false);
+    41	  const [deviceId, setDeviceId] = useState('');
+    42	  
+    43	  const [attendanceRecord, setAttendanceRecord] = useState<any>(null);
+    44	  const hasMarkedIn = !!attendanceRecord;
+    45	  const hasMarkedOut = !!(attendanceRecord && attendanceRecord['OUT Time']);
+    46	
+    47	  const [locationInfo, setLocationInfo] = useState<{lat: number, lng: number, address: string, distance: number | null, accuracy: number} | null>(null);
+    48	  const [locationLoading, setLocationLoading] = useState(false);
+    49	  const [pendingLocation, setPendingLocation] = useState<any>(null);
+    50	
+    51	  const [attendanceType, setAttendanceType] = useState<'IN' | 'OUT'>('IN');
+    52	  const [isOfficialDuty, setIsOfficialDuty] = useState(false);
+    53	  const [liveLocation, setLiveLocation] = useState<{lat: number, lng: number, distance: number | null, address: string} | null>(null);
+    54	  const [locationError, setLocationError] = useState<string | null>(null);
+    55	  const [isCapturingSelfie, setIsCapturingSelfie] = useState(false);
+    56	  const [selfieMode, setSelfieMode] = useState<'IN'|'OUT'>('IN');
+    57	
+    58	      const [submitting, setSubmitting] = useState(false);
+    59	  const [offlineRecords, setOfflineRecords] = useState<any[]>([]);
+    60	
+    61	  useEffect(() => {
+    62	    getOfflineRecords().then(setOfflineRecords);
+    63	  }, []);
+    64	
+    65	  const [isSyncing, setIsSyncing] = useState(false);
+    66	  const [assignedReports, setAssignedReports] = useState<string[]>([]);
+    67	  const [showReportPopup, setShowReportPopup] = useState(false);
+    68	  const [showDailyReportPopup, setShowDailyReportPopup] = useState(false);
+    69	  const [successPopup, setSuccessPopup] = useState<{type: 'IN' | 'OUT', title: string, subtitle: string, details?: any} | null>(null);
+    70	  const [reportReminderPopup, setReportReminderPopup] = useState(false);
+    71	
+    72	  useEffect(() => {
+    73	    let unsub: any;
+    74	    const timer = setTimeout(() => {
+    75	      if (staffData?.staffId) {
+    76	        const q = query(collection(db, 'report_assignments'), where('staffEmpId', '==', staffData.staffId));
+    77	        unsub = onSnapshot(q, (snap) => {
+    78	          const reports = snap.docs.map(doc => doc.data().reportName || doc.data().reportId);
+    79	          setAssignedReports(reports);
+    80	        });
+    81	      }
+    82	    }, 2000);
+    83	  
+    84	  
+    85	  return () => {
+    86	      clearTimeout(timer);
+    87	      if (unsub) unsub();
+    88	    };
+    89	  }, [staffData]);
+    90	
+    91	  useEffect(() => {
+    92	    const handleOnline = () => {
+    93	      syncData(true);
+    94	    };
+    95	    const handleOfflineRecordsUpdate = () => {
+    96	      getOfflineRecords().then(setOfflineRecords);
+    97	    };
+    98	    
+    99	    window.addEventListener('online', handleOnline);
+   100	    window.addEventListener('offline-records-updated', handleOfflineRecordsUpdate);
+   101	    
+   102	    return () => {
+   103	      window.removeEventListener('online', handleOnline);
+   104	      window.removeEventListener('offline-records-updated', handleOfflineRecordsUpdate);
+   105	    };
+   106	  }, []);
+   107	
+   108	  const syncData = async (silent = false) => {
+   109	    if (!navigator.onLine) { 
+   110	      if (!silent) alert('You are offline. Please connect to internet to sync.'); 
+   111	      return; 
+   112	    }
+   113	    setIsSyncing(true);
+   114	    const success = await syncOfflineRecords();
+   115	    getOfflineRecords().then(setOfflineRecords);
+   116	    setIsSyncing(false);
+   117	    if (!silent) {
+   118	      if (success) {
+   119	        alert('Sync completed successfully!');
+   120	      } else {
+   121	        alert('Some records failed to sync. Please try again.');
+   122	      }
+   123	    }
+   124	  };
+   125	
+   126	
+   127	  const [showOfficialDuty, setShowOfficialDuty] = useState(false);
+   128	  const [appSettings, setAppSettings] = useState<any>({
+   129	    attendanceModuleEnabled: true,
+   130	    leaveModuleEnabled: true,
+   131	    odModuleEnabled: true,
+   132	    supportModuleEnabled: true
+   133	  });
+   134	  const [odDutyType, setOdDutyType] = useState('');
+   135	  const [otherOdDutyType, setOtherOdDutyType] = useState('');
+   136	  const [odReason, setOdReason] = useState('');
+   137	  const [odRemarks, setOdRemarks] = useState('');
+   138	  const [odPhoto, setOdPhoto] = useState<string | null>(null);
+   139	  const [odRequests, setOdRequests] = useState<any[]>([]);
+   140	
+   141	  const fetchLiveLocation = () => {
+   142	    setLocationError(null);
+   143	    if (!navigator.geolocation) {
+   144	      setLocationError("Geolocation is not supported by your browser.");
+   145	      return;
+   146	    }
+   147	
+   148	    const cachedStr = sessionStorage.getItem('lastLocation');
+   149	    if (cachedStr) {
+   150	      try {
+   151	        const cached = JSON.parse(cachedStr);
+   152	        if (Date.now() - cached.timestamp < 300000) {
+   153	          setLiveLocation(cached);
+   154	        }
+   155	      } catch (e) {}
+   156	    }
+   157	
+   158	    let isResolved = false;
+   159	
+   160	    const timeoutId = setTimeout(() => {
+   161	      if (!isResolved && !liveLocation) {
+   162	        setLocationError("Location fetching timed out. Please check your GPS and internet connection.");
+   163	      }
+   164	    }, 6000);
+   165	
+   166	    navigator.geolocation.getCurrentPosition(
+   167	      async (position) => {
+   168	        isResolved = true;
+   169	        clearTimeout(timeoutId);
+   170	        const lat = position.coords.latitude;
+   171	        const lng = position.coords.longitude;
+   172	           
+   173	        let distance = null;
+   174	        if (centerInfo && centerInfo.latitude && centerInfo.longitude) {
+   175	          distance = getDistanceFromLatLonInM(centerInfo.latitude, centerInfo.longitude, lat, lng);
+   176	        }
+   177	           
+   178	        const locData = { lat, lng, distance, address: 'Fetching address...' };
+   179	        setLiveLocation(locData);
+   180	        sessionStorage.setItem('lastLocation', JSON.stringify({...locData, timestamp: Date.now()}));
+   181	           
+   182	        try {
+   183	          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
+   184	          const data = await res.json();
+   185	          if (data.display_name) {
+   186	            setLiveLocation(prev => {
+   187	              if (prev) {
+   188	                const updated = { ...prev, address: data.display_name };
+   189	                sessionStorage.setItem('lastLocation', JSON.stringify({...updated, timestamp: Date.now()}));
+   190	                return updated;
+   191	              }
+   192	              return null;
+   193	            });
+   194	          }
+   195	        } catch (err) {}
+   196	      },
+   197	      (error) => {
+   198	        isResolved = true;
+   199	        clearTimeout(timeoutId);
+   200	        if (liveLocation) {
+   201	          console.warn("Location error, using fallback liveLocation.");
+   202	          return;
+   203	        }
+   204	        let errorMsg = 'Failed to get location.';
+   205	        if (error.code === error.PERMISSION_DENIED) errorMsg = "Location permission denied. Please enable GPS and allow location access.";
+   206	        if (error.code === error.POSITION_UNAVAILABLE) errorMsg = "Location information is unavailable. Ensure your GPS is turned on.";
+   207	        if (error.code === error.TIMEOUT) errorMsg = "The request to get user location timed out.";
+   208	        setLocationError(errorMsg);
+   209	      },
+   210	      { enableHighAccuracy: true, maximumAge: 10000, timeout: 5000 }
+   211	    );
+   212	  };
+   213	
+   214	  useEffect(() => {
+   215	    fetchLiveLocation();
+   216	  }, [centerInfo]);
+   217	
+   218	  useEffect(() => {
+   219	    const sessionStr = localStorage.getItem('userSession');
+   220	    if (!sessionStr) {
+   221	      navigate('/centre-login');
+   222	      return;
+   223	    }
+   224	    const session = JSON.parse(sessionStr);
+   225	    if (session.role !== 'staff') {
+   226	      navigate('/centre-login');
+   227	      return;
+   228	    }
+   229	    setStaffData(session);
+   230	
+   231	    const getCenter = async () => {
+   232	      try {
+   233	        let cDoc;
+   234	        try {
+   235	          cDoc = !navigator.onLine ? await getDocFromCache(doc(db, 'centers', session.centerId)) : await getDoc(doc(db, 'centers', session.centerId));
+   236	        } catch(e) {
+   237	          if (!navigator.onLine) {
+   238	            cDoc = await getDoc(doc(db, 'centers', session.centerId));
+   239	          }
+   240	        }
+   241	        if (cDoc.exists()) {
+   242	           setCenterInfo(cDoc.data());
+   243	        }
+   244	      } catch(e) {}
+   245	    }
+   246	    getCenter();
+   247	
+   248	    let storedDeviceId = localStorage.getItem('deviceId');
+   249	    if (!storedDeviceId) {
+   250	      storedDeviceId = 'dev_' + Math.random().toString(36).substr(2, 9);
+   251	      localStorage.setItem('deviceId', storedDeviceId);
+   252	    }
+   253	    setDeviceId(storedDeviceId);
+   254	
+   255	    const unsubAtt = checkTodayAttendance(session.uid);
+   256	    checkODRequests(session.uid);
+   257	    
+   258	    const unsubSettings = onSnapshot(doc(db, 'settings', 'appSettings'), (docSnap) => {
+   259	      if (docSnap.exists()) {
+   260	         setAppSettings(prev => ({ ...prev, ...docSnap.data() }));
+   261	      }
+   262	    });
+   263	    return () => {
+   264	      unsubSettings();
+   265	      if (unsubAtt) unsubAtt();
+   266	    };
+   267	  }, [navigate]);
+   268	
+   269	  const checkODRequests = async (uid: string) => {
+   270	    try {
+   271	      const q = query(
+   272	        collection(db, 'official_duty_requests'),
+   273	        where('staffUid', '==', uid)
+   274	      );
+   275	      let snapshot;
+   276	      try {
+   277	        snapshot = !navigator.onLine ? await getDocsFromCache(q) : await getDocs(q);
+   278	      } catch (e) {
+   279	        if (!navigator.onLine) {
+   280	           snapshot = await getDocs(q);
+   281	        } else {
+   282	           throw e;
+   283	        }
+   284	      }
+   285	      const requests: any[] = [];
+   286	      snapshot.forEach(doc => {
+   287	        requests.push({ id: doc.id, ...doc.data() });
+   288	      });
+   289	      requests.sort((a, b) => {
+   290	         const timeA = a.timestamp?.toMillis ? a.timestamp.toMillis() : 0;
+   291	         const timeB = b.timestamp?.toMillis ? b.timestamp.toMillis() : 0;
+   292	         return timeB - timeA;
+   293	      });
+   294	      setOdRequests(requests);
+   295	    } catch(err) {
+   296	      console.error(err);
+   297	    }
+   298	  };
+   299	
+   300	  const checkTodayAttendance = (uid: string) => {
+   301	    try {
+   302	      const today = new Date().toLocaleDateString('en-CA');
+   303	      const q = query(
+   304	        collection(db, 'attendance'),
+   305	        where('staffUid', '==', uid),
+   306	        where('Date', '==', today)
+   307	      );
+   308	      
+   309	      return onSnapshot(q, async (snap) => {
+   310	        let rec: any = null;
+   311	        if (!snap.empty) {
+   312	          const docSnap = snap.docs[0];
+   313	          rec = { id: docSnap.id, ...docSnap.data() };
+   314	        }
+   315	        
+   316	        try {
+   317	          const offRecs = await getOfflineRecords();
+   318	          if (!rec) {
+   319	             const inOffline = offRecs.find(r => r.type === 'IN' && (r?.data?.Date === today || r?.data?.date === today));
+   320	             if (inOffline) {
+   321	               rec = { id: inOffline.id, ...inOffline.data };
+   322	             }
+   323	          }
+   324	          if (rec) {
+   325	             const outOffline = offRecs.find(r => r.type === 'OUT' && (r?.data?.Date === today || r?.data?.date === today));
+   326	             if (outOffline) {
+   327	               rec = { ...rec, ...outOffline.data };
+   328	             }
+   329	          }
+   330	        } catch(e) {}
+   331	        
+   332	        setAttendanceRecord(rec);
+   333	      });
+   334	    } catch (err) {
+   335	      console.error("Error checking attendance:", err);
+   336	    }
+   337	  };
+   338	
+   339	  const handleLogout = () => {
+   340	    localStorage.removeItem('userSession');
+   341	    navigate('/home');
+   342	  };
+   343	
+   344	  
+   345	  const processSelfieLocationAttendance = async (type: 'IN' | 'OUT', photoDataUrl: string) => {
+   346	    if (!navigator.onLine) {
+   347	        sendCenterNotification(centerInfo?.id || '', centerInfo?.code || '', 'Internet Disconnected During Attendance', staffData.name || '', staffData.staffId || '', staffData.designation || 'Staff', type, 'User is offline', 0);
+   348	    }
+   349	    setLocationLoading(true);
+   350	    setAttendanceType(type);
+   351	    
+   352	    if (!navigator.geolocation) {
+   353	       sendCenterNotification(centerInfo?.id || '', centerInfo?.code || '', 'GPS Disabled', staffData.name || '', staffData.staffId || '', staffData.designation || 'Staff', type, 'Geolocation not supported', 0);
+   354	       alert("Location permission is required.");
+   355	       setLocationLoading(false);
+   356	       return;
+   357	    }
+   358	
+   359	    navigator.geolocation.getCurrentPosition(
+   360	      async (position) => {
+   361	        const { latitude, longitude, accuracy } = position.coords;
+   362	        setPendingLocation(position.coords);
+   363	        
+   364	        try {
+   365	          let address = "Unknown Address";
+   366	          // Fetch address in background to avoid blocking submission
+   367	          fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`)
+   368	            .then(res => res.json())
+   369	            .then(data => {
+   370	              if (data.display_name) {
+   371	                 console.log("Address fetched in background:", data.display_name);
+   372	              }
+   373	            })
+   374	            .catch(() => {});
+   375	          
+   376	          let distance = 0;
+   377	          if (centerInfo && centerInfo.latitude && centerInfo.longitude) {
+   378	            distance = getDistanceFromLatLonInM(centerInfo.latitude, centerInfo.longitude, latitude, longitude);
+   379	          }
+   380	          
+   381	          const isOutside = distance > (Number(centerInfo?.geofenceRadius) || 200);
+   382	          if (isOutside && !isOfficialDuty) {
+   383	            alert("You are outside the Center Geofence.");
+   384	            sendCenterNotification(
+   385	              centerInfo?.id || '',
+   386	              centerInfo?.code || '',
+   387	              'Outside Geofence Attendance Attempt',
+   388	              staffData.name || '',
+   389	              staffData.staffId || '',
+   390	              staffData.designation || 'Staff',
+   391	              'Outside Geofence',
+   392	              `Attempted from ${Math.round(distance)}m away`,
+   393	              Math.round(distance)
+   394	            );
+   395	            setLocationLoading(false);
+   396	            return;
+   397	          }
+   398	          
+   399	          let attendanceStatus = isOutside ? 'Outside Geofence' : 'Present';
+   400	          
+   401	          if (!isOutside && type === 'IN') {
+   402	            try {
+   403	              if (centerInfo && centerInfo.workStartTime) {
+   404	                const [hours, minutes] = centerInfo.workStartTime.split(':').map(Number);
+   405	                const expectedTime = new Date();
+   406	                expectedTime.setHours(hours, minutes, 0, 0);
+   407	                const gracePeriodMs = (Number(centerInfo.gracePeriodMinutes) || 15) * 60000;
+   408	                const allowedTime = new Date(expectedTime.getTime() + gracePeriodMs);
+   409	                if (new Date() > allowedTime) {
+   410	                  attendanceStatus = 'Late';
+   411	                }
+   412	              }
+   413	            } catch(e) {}
+   414	          }
+   415	          
+   416	          const today = new Date();
+   417	          const dateStr = today.toLocaleDateString('en-CA');
+   418	          const timeStr = today.toLocaleTimeString('en-US', { hour12: false });
+   419	          
+   420	          if (type === 'IN') {
+   421	            const newRecord = {
+   422	              staffUid: staffData.uid || '',
+   423	              'Distance from Center': Math.round(distance),
+   424	              'Staff ID': staffData.staffId || '',
+   425	              'Staff Name': staffData.name || '',
+   426	              'Center Code': centerInfo?.code || '',
+   427	              'Center Name': centerInfo?.name || '',
+   428	              'Date': dateStr,
+   429	              date: dateStr,
+   430	              'IN Time': timeStr,
+   431	              'Latitude': latitude,
+   432	              'Longitude': longitude,
+   433	              'Accuracy': accuracy,
+   434	              'Current Address': address,
+   435	              'Device Information': deviceId || '',
+   436	              'Attendance Status': attendanceStatus,
+   437	              'Attendance Type': 'Selfie + Location',
+   438	              'syncStatus': 'Offline Saved'
+   439	            };
+   440	            
+   441	            const localId = `local_${Date.now()}`;
+   442	            await saveOfflineRecord({
+   443	              id: localId,
+   444	              type: 'IN',
+   445	              mode: 'Selfie + Location',
+   446	              data: newRecord,
+   447	              photoDataUrl: photoDataUrl,
+   448	              timestamp: Date.now(),
+   449	              status: 'Offline Saved',
+   450	              isOutside
+   451	            });
+   452	            
+   453	            setAttendanceRecord({ id: localId, ...newRecord });
+   454	            setSuccessPopup({
+   455	              type: 'IN',
+   456	              title: 'Attendance Marked Successfully.',
+   457	              subtitle: 'Welcome to YASHI SKILL PROJECT PVT. LTD., Patna. 🤩',
+   458	              details: {
+   459	                date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+   460	                time: timeStr,
+   461	                center: centerInfo?.name || '',
+   462	                staffName: staffData?.name || ''
+   463	              }
+   464	            });
+   465	          } else {
+   466	            // OUT
+   467	            if (!attendanceRecord) return;
+   468	            
+   469	            const outDateStr = today.toLocaleDateString('en-CA');
+   470	            const workingHours = calculateWorkingHours(attendanceRecord['IN Time'] || attendanceRecord.time, timeStr);
+   471	
+   472	            const outRecord: any = {
+   473	              'OUT Date': outDateStr,
+   474	              'OUT Time': timeStr,
+   475	              'Working Hours': workingHours,
+   476	              'OUT GPS Location': `${latitude}, ${longitude}`,
+   477	              'OUT Latitude': latitude,
+   478	              'OUT Longitude': longitude,
+   479	              'OUT Accuracy': accuracy,
+   480	              'OUT Current Address': address,
+   481	              'Device Information': deviceId || '',
+   482	              'Distance from Center': Math.round(distance),
+   483	              'OUT Status': attendanceStatus,
+   484	              'Attendance Status': attendanceStatus,
+   485	              'Attendance Type': 'Selfie + Location',
+   486	              'syncStatus': 'Synced'
+   487	            };
+   488	
+   489	            if (!navigator.onLine) {
+   490	               alert("You are offline. OUT attendance must be submitted online to ensure immediate database update.");
+   491	               setLocationLoading(false);
+   492	               return;
+   493	            }
+   494	
+   495	            try {
+   496	              let photoUrl = '';
+   497	              if (photoDataUrl) {
+   498	                const photoRef = ref(storage, `attendance_selfies/${staffData.uid}_OUT_${Date.now()}.jpg`);
+   499	                await uploadString(photoRef, photoDataUrl, 'data_url');
+   500	                photoUrl = await getDownloadURL(photoRef);
+   501	                outRecord['OUT Selfie URL'] = photoUrl;
+   502	              }
+   503	
+   504	              let targetDocId = attendanceRecord.attendanceDocId || attendanceRecord.id;
+   505	              if (targetDocId.startsWith('local_')) {
+   506	                 targetDocId = `${staffData.uid}_${attendanceRecord.Date || attendanceRecord.date}`;
+   507	              }
+   508	              
+   509	              const docRef = doc(db, 'attendance', targetDocId);
+   510	              await updateDoc(docRef, outRecord);
+   511	
+   512	              setAttendanceRecord({ ...attendanceRecord, ...outRecord, attendanceDocId: targetDocId });
+   513	              
+   514	              setSuccessPopup({
+   515	                type: 'OUT',
+   516	                title: 'Attendance Marked Successfully.',
+   517	                subtitle: "Thank you for completing today's duty. 🎉",
+   518	                details: {
+   519	                  date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+   520	                  time: timeStr,
+   521	                  center: centerInfo?.name || '',
+   522	                  staffName: staffData?.name || ''
+   523	                }
+   524	              });
+   525	            } catch (err: any) {
+   526	              console.error("Failed to save OUT attendance:", err);
+   527	              alert(`Failed to save OUT attendance: ${err.message || "Unknown error"}`);
+   528	              setLocationLoading(false);
+   529	              return;
+   530	            }
+   531	          }
+   532	          setLocationLoading(false);
+   533	          syncData(true); // Trigger background sync immediately and update UI
+   534	        } catch (err) {
+   535	          console.error(err);
+   536	          sendCenterNotification(centerInfo?.id || '', centerInfo?.code || '', 'Attendance Failed', staffData.name || '', staffData.staffId || '', staffData.designation || 'Staff', type, (err as any)?.message || 'Unknown error', 0);
+   537	          alert(`An error occurred while saving attendance. Reason: ${(err as any)?.message || "Unknown error"}`);
+   538	        } finally {
+   539	          setLocationLoading(false);
+   540	        }
+   541	      },
+   542	      (error) => {
+   543	         let errorMsg = "Location permission is required.";
+   544	         if (error.code === error.PERMISSION_DENIED) errorMsg = "Location permission denied by browser.";
+   545	         else if (error.code === error.POSITION_UNAVAILABLE) errorMsg = "Location position unavailable.";
+   546	         else if (error.code === error.TIMEOUT) errorMsg = "Location request timed out.";
+   547	         alert(errorMsg);
+   548	         setLocationLoading(false);
+   549	      },
+   550	      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+   551	    );
+   552	  };
+   553	
+   554	  const processLocationOnlyAttendance = async (type: 'IN' | 'OUT') => {
+   555	    setSubmitting(true);
+   556	    setLocationLoading(true);
+   557	    try {
+   558	      if (!navigator.geolocation) {
+   559	         alert("Location Permission Denied");
+   560	         setSubmitting(false);
+   561	         setLocationLoading(false);
+   562	         return;
+   563	      }
+   564	
+   565	      
+   566	      const fetchLocationWithTimeoutAndFallback = (onSuccess: any, onError: any, options?: any) => {
+   567	        if (liveLocation && Date.now() - (JSON.parse(sessionStorage.getItem('lastLocation') || '{}').timestamp || 0) < 300000) {
+   568	           console.log("Using cached liveLocation");
+   569	           onSuccess({ coords: { latitude: liveLocation.lat, longitude: liveLocation.lng, accuracy: 10 } });
+   570	           return;
+   571	        }
+   572	
+   573	        const timeoutId = setTimeout(() => {
+   574	          if (liveLocation) {
+   575	            console.warn("Location fetching timed out. Using fallback liveLocation.");
+   576	            onSuccess({ coords: { latitude: liveLocation.lat, longitude: liveLocation.lng, accuracy: 10 } });
+   577	          } else {
+   578	            onError({ code: 3, message: "Timeout" });
+   579	          }
+   580	        }, 6000);
+   581	
+   582	        navigator.geolocation.getCurrentPosition(
+   583	          (position) => {
+   584	            clearTimeout(timeoutId);
+   585	            onSuccess(position);
+   586	          },
+   587	          (error) => {
+   588	            clearTimeout(timeoutId);
+   589	            if (liveLocation) {
+   590	              console.warn("Location error, using fallback liveLocation.");
+   591	              onSuccess({ coords: { latitude: liveLocation.lat, longitude: liveLocation.lng, accuracy: 10 } });
+   592	            } else {
+   593	              onError(error);
+   594	            }
+   595	          },
+   596	          options || { enableHighAccuracy: true, timeout: 5000, maximumAge: 10000 }
+   597	        );
+   598	      };
+   599	
+   600	      fetchLocationWithTimeoutAndFallback(
+   601	
+   602	        async (position) => {
+   603	          const { latitude, longitude, accuracy } = position.coords;
+   604	          
+   605	          let address = "Unknown Address";
+   606	          // Fetch address in background to avoid blocking submission
+   607	          fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`)
+   608	            .then(res => res.json())
+   609	            .then(data => {
+   610	              if (data.display_name) console.log("Address fetched:", data.display_name);
+   611	            }).catch(() => {});
+   612	          
+   613	          
+   614	          
+   615	          let distance = 0;
+   616	          if (centerInfo && centerInfo.latitude && centerInfo.longitude) {
+   617	            distance = getDistanceFromLatLonInM(centerInfo.latitude, centerInfo.longitude, latitude, longitude);
+   618	          }
+   619	          
+   620	          const isOutside = distance > (Number(centerInfo?.geofenceRadius) || 200);
+   621	          if (isOutside && !isOfficialDuty) {
+   622	            alert("You are outside the Center Geofence.");
+   623	            setLocationLoading(false);
+   624	            return;
+   625	          }
+   626	
+   627	          let attendanceStatus = isOutside ? 'Outside Geofence' : 'Present';
+   628	          if (!isOutside && type === 'IN') {
+   629	            try {
+   630	              let settingsSnap;
+   631	              try {
+   632	                settingsSnap = !navigator.onLine ? await getDocFromCache(doc(db, 'settings', 'appSettings')) : await getDoc(doc(db, 'settings', 'appSettings'));
+   633	              } catch (e) {
+   634	                if (!navigator.onLine) settingsSnap = await getDoc(doc(db, 'settings', 'appSettings'));
+   635	              }
+   636	              if (settingsSnap.exists()) {
+   637	                const sData = settingsSnap.data();
+   638	                const officeStartTimeStr = sData.officeStartTime || '09:30';
+   639	                const halfDayTimeStr = sData.halfDayTime || '11:30';
+   640	                
+   641	                const now = new Date();
+   642	                const hours = now.getHours();
+   643	                const minutes = now.getMinutes();
+   644	                const currentTimeStr = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+   645	                
+   646	                if (currentTimeStr > halfDayTimeStr) {
+   647	                  attendanceStatus = 'Half Day';
+   648	                } else if (currentTimeStr > officeStartTimeStr) {
+   649	                  attendanceStatus = 'Late';
+   650	                }
+   651	              }
+   652	            } catch (err) {}
+   653	          }
+   654	          
+   655	          setLiveLocation(prev => ({ ...prev, lat: latitude, lng: longitude, address }));
+   656	          
+   657	          const today = new Date();
+   658	          const dateStr = today.toLocaleDateString('en-CA');
+   659	          const timeStr = today.toLocaleTimeString('en-US', { hour12: false });
+   660	          
+   661	          if (!navigator.onLine) {
+   662	            if (type === 'IN') {
+   663	              const today = new Date();
+   664	      const dateStr = today.toLocaleDateString('en-CA');
+   665	      const timeStr = today.toLocaleTimeString('en-US', { hour12: false });
+   666	
+   667	      const newRecord = {
+   668	              staffUid: staffData.uid || '',
+   669	              'Distance from Center': Math.round(distance),
+   670	                'Staff ID': staffData.staffId || '',
+   671	                'Staff Name': staffData.name || '',
+   672	                'Center Code': centerInfo?.code || '',
+   673	                'Center Name': centerInfo?.name || '',
+   674	                'Date': dateStr,
+   675	                date: dateStr,
+   676	                'IN Time': timeStr,
+   677	                'Latitude': latitude,
+   678	                'Longitude': longitude,
+   679	                'Accuracy': accuracy,
+   680	                'Current Address': address,
+   681	                
+   682	                'Device Information': deviceId || '',
+   683	                'Attendance Status': attendanceStatus,
+   684	                'Attendance Type': 'Location Only',
+   685	                'syncStatus': 'Offline Saved'
+   686	              };
+   687	              const localId = `local_${Date.now()}`;
+   688	              await saveOfflineRecord({
+   689	                id: localId,
+   690	                type: 'IN',
+   691	                mode: 'Location Only',
+   692	                data: { ...newRecord, 'Distance from Center': Math.round(distance) },
+   693	                timestamp: Date.now(),
+   694	                status: 'Offline Saved',
+   695	                isOutside
+   696	              });
+   697	              setAttendanceRecord({ id: localId, ...newRecord });
+   698	            } else {
+   699	              if (attendanceRecord?.id) {
+   700	                const updateData: any = {
+   701	                  'OUT Time': timeStr,
+   702	                  'OUT Latitude': latitude,
+   703	                  'OUT Longitude': longitude,
+   704	                  'OUT Accuracy': accuracy,
+   705	                  'OUT Current Address': address,
+   706	                  
+   707	                  'OUT Attendance Type': 'Location Only',
+   708	                  'syncStatus': 'Offline Saved'
+   709	                };
+   710	                if (isOutside) {
+   711	                  updateData['Attendance Status'] = 'Outside Center';
+   712	                }
+   713	                await saveOfflineRecord({
+   714	                  id: `local_${Date.now()}`,
+   715	                  type: 'OUT',
+   716	                  mode: 'Location Only',
+   717	                  data: updateData,
+   718	                  timestamp: Date.now(),
+   719	                  status: 'Offline Saved',
+   720	                  attendanceDocId: attendanceRecord.id,
+   721	                  isOutside
+   722	                });
+   723	                setAttendanceRecord({ ...attendanceRecord, ...updateData });
+   724	              }
+   725	            }
+   726	            if (type === 'IN') {
+   727	              setSuccessPopup({
+   728	              type: 'IN',
+   729	              title: 'Attendance Marked Successfully.',
+   730	              subtitle: 'Welcome to YASHI SKILL PROJECT PVT. LTD., Patna. 🤩',
+   731	              details: {
+   732	                date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+   733	                time: timeStr,
+   734	                center: centerInfo?.name || '',
+   735	                staffName: staffData?.name || ''
+   736	              }
+   737	            });
+   738	            } else {
+   739	            setSuccessPopup({
+   740	              type: 'OUT',
+   741	              title: 'Attendance Marked Successfully.',
+   742	              subtitle: "Thank you for completing today's duty. 🎉",
+   743	              details: {
+   744	                date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+   745	                time: timeStr,
+   746	                center: centerInfo?.name || '',
+   747	                staffName: staffData?.name || ''
+   748	              }
+   749	            });
+   750	            }
+   751	            syncData(true);
+   752	            if (type === 'IN' && assignedReports.length > 0) {
+   753	              setShowReportPopup(true);
+   754	            }
+   755	            setSubmitting(false);
+   756	            setLocationLoading(false);
+   757	            return;
+   758	          }
+   759	
+   760	          if (type === 'IN') {
+   761	            const newRecord = {
+   762	              staffUid: staffData.uid || '',
+   763	              'Staff ID': staffData.staffId || '',
+   764	              'Staff Name': staffData.name || '',
+   765	              'Center Code': centerInfo?.code || '',
+   766	              'Center Name': centerInfo?.name || '',
+   767	              'Date': dateStr,
+   768	              date: dateStr,
+   769	              'IN Time': timeStr,
+   770	              'Latitude': latitude,
+   771	              'Longitude': longitude,
+   772	              'Accuracy': accuracy,
+   773	              'Current Address': address,
+   774	              
+   775	              'Device Information': deviceId || '',
+   776	              'Distance from Center': Math.round(distance),
+   777	              'Attendance Status': attendanceStatus,
+   778	              'Attendance Type': 'Location Only',
+   779	              timestamp: serverTimestamp()
+   780	            };
+   781	            
+   782	            const docRef = await addDoc(collection(db, 'attendance'), newRecord);
+   783	            
+   784	            // Notification logic
+   785	            if (!isOutside) {
+   786	              const notifType = attendanceStatus === 'Late' ? 'Staff Marked Late' : 'Attendance Marked Successfully.';
+   787	              sendCenterNotification(
+   788	                centerInfo?.id || '', centerInfo?.code || '', notifType, staffData.name || '', staffData.staffId || '', staffData.designation || 'Staff', attendanceStatus, `Marked ${type} at ${timeStr}`, Math.round(distance)
+   789	              );
+   790	            }
+   791	            
+   792	            if (isOutside) {
+   793	              await addDoc(collection(db, 'outside_center_attendance'), {
+   794	                staffUid: newRecord.staffUid,
+   795	                'Staff ID': newRecord['Staff ID'],
+   796	                'Staff Name': newRecord['Staff Name'],
+   797	                'Role': staffData.designation || 'Staff',
+   798	                'Center Code': newRecord['Center Code'],
+   799	                'Center Name': newRecord['Center Name'],
+   800	                'Date': newRecord['Date'],
+   801	                date: newRecord['date'],
+   802	                'Time': newRecord['IN Time'],
+   803	                'Current Latitude': newRecord['Latitude'],
+   804	                'Current Longitude': newRecord['Longitude'],
+   805	                'Current Address': newRecord['Current Address'],
+   806	                'Device Information': newRecord['Device Information'],
+   807	                'Status': 'Pending Review',
+   808	                'Attendance Status': 'Outside Geofence',
+   809	                timestamp: serverTimestamp(),
+   810	                attendanceDocId: docRef.id
+   811	              });
+   812	            }
+   813	
+   814	            setAttendanceRecord({ id: docRef.id, ...newRecord });
+   815	          } else {
+   816	            if (attendanceRecord?.id) {
+   817	              const updateData: any = {
+   818	                'OUT Time': timeStr,
+   819	                'OUT Latitude': latitude,
+   820	                'OUT Longitude': longitude,
+   821	                'OUT Accuracy': accuracy,
+   822	                'OUT Current Address': address,
+   823	                
+   824	                'OUT Attendance Type': 'Location Only'
+   825	              };
+   826	              
+   827	              if (isOutside) {
+   828	                updateData['Attendance Status'] = 'Outside Geofence';
+   829	              }
+   830	              await updateDoc(doc(db, 'attendance', attendanceRecord.id), updateData);
+   831	              
+   832	              if (!isOutside) {
+   833	                sendCenterNotification(
+   834	                  centerInfo?.id || '', centerInfo?.code || '', 'Attendance Marked Successfully.', staffData.name || '', staffData.staffId || '', staffData.designation || 'Staff', 'Present', `Marked OUT at ${timeStr}`, Math.round(distance)
+   835	                );
+   836	              }
+   837	              
+   838	              if (isOutside) {
+   839	                 await addDoc(collection(db, 'outside_center_attendance'), {
+   840	                    staffUid: staffData.uid || '',
+   841	                    'Staff ID': staffData.staffId || '',
+   842	                    'Staff Name': staffData.name || '',
+   843	                    'Role': staffData.designation || 'Staff',
+   844	                    'Center Code': centerInfo?.code || '',
+   845	                    'Center Name': centerInfo?.name || '',
+   846	                    'Date': dateStr,
+   847	                    date: dateStr,
+   848	                    'Time': timeStr,
+   849	                    'Current Latitude': latitude,
+   850	                    'Current Longitude': longitude,
+   851	                    'Current Address': address,
+   852	                    'Device Information': deviceId || '',
+   853	                    'Status': 'Pending Review',
+   854	                    'Attendance Status': 'Outside Geofence',
+   855	                    timestamp: serverTimestamp(),
+   856	                    attendanceDocId: attendanceRecord.id
+   857	                  });
+   858	              }
+   859	
+   860	              setAttendanceRecord({ ...attendanceRecord, ...updateData });
+   861	            }
+   862	          }
+   863	          
+   864	          if (type === 'IN') {
+   865	            setSuccessPopup({
+   866	              type: 'IN',
+   867	              title: 'Attendance Marked Successfully.',
+   868	              subtitle: 'Welcome to YASHI SKILL PROJECT PVT. LTD., Patna. 🤩',
+   869	              details: {
+   870	                date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+   871	                time: timeStr,
+   872	                center: centerInfo?.name || '',
+   873	                staffName: staffData?.name || ''
+   874	              }
+   875	            });
+   876	            if (assignedReports.length > 0) {
+   877	              setShowReportPopup(true);
+   878	            }
+   879	          } else {
+   880	            setSuccessPopup({
+   881	              type: 'OUT',
+   882	              title: 'Attendance Marked Successfully.',
+   883	              subtitle: "Thank you for completing today's duty. 🎉",
+   884	              details: {
+   885	                date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+   886	                time: timeStr,
+   887	                center: centerInfo?.name || '',
+   888	                staffName: staffData?.name || ''
+   889	              }
+   890	            });
+   891	          }
+   892	          setSubmitting(false);
+   893	          setLocationLoading(false);
+   894	        },
+   895	        (error) => {
+   896	          console.error("Location error:", error);
+   897	          alert("Location Error: " + error.message);
+   898	          setSubmitting(false);
+   899	          setLocationLoading(false);
+   900	        }
+   901	      );
+   902	    } catch (err) {
+   903	      console.error(err);
+   904	      alert(`Failed to submit attendance. Reason: ${(err as any)?.message || "Unknown error"}`);
+   905	      setSubmitting(false);
+   906	      setLocationLoading(false);
+   907	    }
+   908	  };
+   909	
+   910	    const calculateWorkingHours = (inTime, outTime) => {
+   911	    if (!inTime || !outTime) return 'N/A';
+   912	    try {
+   913	      const parseTime = (t) => {
+   914	        let [time, period] = t.split(' ');
+   915	        if (!period) period = '';
+   916	        const [h, m, s] = time.split(':').map(Number);
+   917	        let hour = h;
+   918	        if (period.toUpperCase() === 'PM' && hour !== 12) hour += 12;
+   919	        if (period.toUpperCase() === 'AM' && hour === 12) hour = 0;
+   920	        return new Date(2000, 0, 1, hour, m || 0, s || 0);
+   921	      };
+   922	      const diff = parseTime(outTime).getTime() - parseTime(inTime).getTime();
+   923	      if (diff < 0) return 'N/A';
+   924	      const hrs = Math.floor(diff / 3600000);
+   925	      const mins = Math.floor((diff % 3600000) / 60000);
+   926	      return `${hrs}h ${mins}m`;
+   927	    } catch {
+   928	      return 'N/A';
+   929	    }
+   930	  };
+   931	
+   932	  const startAttendanceProcess = async (type: 'IN' | 'OUT') => {
+   933	    if ((type === 'IN' && hasMarkedIn) || (type === 'OUT' && hasMarkedOut)) {
+   934	      sendCenterNotification(
+   935	        centerInfo?.id || '',
+   936	        centerInfo?.code || '',
+   937	        'Duplicate Attendance Attempt',
+   938	        staffData.name || '',
+   939	        staffData.staffId || '',
+   940	        staffData.designation || 'Staff',
+   941	        type,
+   942	        `Tried to mark ${type} again`,
+   943	        0
+   944	      );
+   945	      return;
+   946	    }
+   947	    if (!centerInfo) {
+   948	      alert("Center information not loaded yet.");
+   949	      return;
+   950	    }
+   951	    
+   952	    setAttendanceType(type);
+   953	    
+   954	    setSelfieMode(type);
+   955	    setIsCapturingSelfie(true);
+   956	  };
+   957	
+   958	  const submitOfficialDuty = async () => {
+   959	    if (!odDutyType || !odReason) {
+   960	      alert("Please fill all required fields");
+   961	      return;
+   962	    }
+   963	    setSubmitting(true);
+   964	    try {
+   965	      let lat = 0;
+   966	      let lng = 0;
+   967	      if (navigator.geolocation) {
+   968	         const pos = await new Promise<any>((resolve, reject) => {
+   969	            navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 7000, maximumAge: 0 });
+   970	         }).catch(() => null);
+   971	         if (pos) {
+   972	            lat = pos.coords.latitude;
+   973	            lng = pos.coords.longitude;
+   974	         }
+   975	      }
+   976	      
+   977	      let photoUrl = '';
+   978	      if (odPhoto) {
+   979	          const photoId = `od_${Date.now()}.jpg`;
+   980	          const photoRef = ref(storage, `od_photos/${photoId}`);
+   981	          await uploadString(photoRef, odPhoto, 'data_url');
+   982	          photoUrl = await getDownloadURL(photoRef);
+   983	      }
+   984	
+   985	      const today = new Date();
+   986	      const dateStr = today.toLocaleDateString('en-CA');
+   987	      const timeStr = today.toLocaleTimeString('en-US', { hour12: false });
+   988	
+   989	      const newRecord = {
+   990	        staffUid: staffData.uid || '',
+   991	        'Staff ID': staffData.staffId || '',
+   992	        'Staff Name': staffData.name || '',
+   993	        'Center ID': staffData.centerId || '',
+   994	        'Center Code': centerInfo?.code || '',
+   995	        'Center Name': centerInfo?.name || '',
+   996	        'Date': dateStr,
+   997	        'Time': timeStr,
+   998	        'Duty Type': odDutyType || '',
+   999	        'Reason': odReason || '',
+  1000	        'Remarks': odRemarks || '',
+  1001	        'GPS Latitude': lat,
+  1002	        'GPS Longitude': lng,
+  1003	        
+  1004	        'Photo': photoUrl,
+  1005	        'Status': 'Pending Approval',
+  1006	        timestamp: serverTimestamp()
+  1007	      };
+  1008	      
+  1009	      await addDoc(collection(db, 'official_duty_requests'), newRecord);
+  1010	      
+  1011	      alert("Official Duty Request Submitted Successfully");
+  1012	      setShowOfficialDuty(false);
+  1013	      setOdDutyType('');
+  1014	      setOtherOdDutyType('');
+  1015	      setOdReason('');
+  1016	      setOdRemarks('');
+  1017	      setOdPhoto(null);
+  1018	      checkODRequests(staffData.uid);
+  1019	    } catch (err) {
+  1020	      console.error(err);
+  1021	      alert("Failed to submit OD Request.");
+  1022	    } finally {
+  1023	      setSubmitting(false);
+  1024	    }
+  1025	  };
+  1026	  
+  1027	  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  1028	    const file = e.target.files?.[0];
+  1029	    if (file) {
+  1030	      try {
+  1031	        const compressedDataUrl = await compressImage(file, 20, 30, 0.6, 800);
+  1032	        setOdPhoto(compressedDataUrl);
+  1033	      } catch (err) {
+  1034	        console.error("Compression error:", err);
+  1035	        // Fallback to basic file read
+  1036	        const reader = new FileReader();
+  1037	        reader.onloadend = () => {
+  1038	          setOdPhoto(reader.result as string);
+  1039	        };
+  1040	        reader.readAsDataURL(file);
+  1041	      }
+  1042	    }
+  1043	  };
+  1044	
+  1045	  
+  1046	  if (!staffData) return null;
+  1047	
+  1048	  let statusColor = 'bg-slate-50 text-slate-600 border-slate-200';
+  1049	  let statusText = 'Not Marked';
+  1050	  let statusBg = 'bg-slate-100';
+  1051	  
+  1052	  if (hasMarkedOut) {
+  1053	    statusColor = 'bg-red-50 text-red-600 border-red-200';
+  1054	    statusText = '🔴 OUT ATTENDANCE';
+  1055	    statusBg = 'bg-red-50';
+  1056	  } else if (hasMarkedIn) {
+  1057	    if (attendanceRecord['Attendance Status'] === 'Rejected') {
+  1058	       statusColor = 'bg-red-50 text-red-600 border-red-200';
+  1059	       statusText = '🔴 REJECTED OD';
+  1060	       statusBg = 'bg-red-50';
+  1061	    } else if (attendanceRecord['Attendance Status'] === 'Pending Approval') {
+  1062	       statusColor = 'bg-amber-50 text-amber-600 border-amber-200';
+  1063	       statusText = '🟡 PENDING OD';
+  1064	       statusBg = 'bg-amber-50';
+  1065	    } else {
+  1066	       statusColor = 'bg-green-50 text-green-600 border-green-200';
+  1067	       statusText = '🟢 IN ATTENDANCE';
+  1068	       statusBg = 'bg-green-50';
+  1069	    }
+  1070	  }
+  1071	
+  1072	  if (isCapturingSelfie) {
+  1073	    return (
+  1074	      <LiveCamera 
+  1075	        onCancel={() => setIsCapturingSelfie(false)} 
+  1076	        onCapture={(dataUrl) => {
+  1077	          setIsCapturingSelfie(false);
+  1078	          processSelfieLocationAttendance(selfieMode, dataUrl);
+  1079	        }} 
+  1080	      />
+  1081	    );
+  1082	  }
+  1083	
+  1084	  return (
+  1085	    <div className="flex flex-col min-h-screen bg-slate-50 text-slate-900 font-sans overflow-hidden">
+  1086	      <div className="bg-blue-900 text-white p-6 shadow-md relative">
+  1087	        <div className="flex justify-between items-start gap-3">
+  1088	          <button onClick={() => navigate(`/centre/${staffData.centerId}/staff`)} className="p-2 -ml-2 rounded-full hover:bg-white/10 transition-colors mt-0.5 shrink-0">
+  1089	            <ArrowLeft size={20} />
+  1090	          </button>
+  1091	          <div className="flex-1">
+  1092	            <h1 className="text-xl font-bold tracking-tight uppercase leading-tight flex items-center gap-2">
+  1093	              Live Attendance
+  1094	              <div className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border ${isOnline ? 'bg-emerald-500/20 border-emerald-400 text-emerald-100' : 'bg-red-500/20 border-red-400 text-red-100'}`}>
+  1095	                <div className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-400' : 'bg-red-400'}`}></div>
+  1096	                {isOnline ? 'ONLINE' : 'OFFLINE'}
+  1097	              </div>
+  1098	            </h1>
+  1099	            <p className="text-[10px] text-blue-200 uppercase tracking-widest mt-0.5">Staff: {staffData.name || staffData.staffId}</p>
+  1100	          </div>
+  1101	          <div className="flex items-center gap-2">
+  1102	            <button onClick={syncData} disabled={isSyncing} className="p-2 bg-blue-800 rounded-lg hover:bg-blue-700 transition-colors border border-blue-600">
+  1103	              <RefreshCw size={16} className={isSyncing ? 'animate-spin' : ''} />
+  1104	            </button>
+  1105	            <button onClick={() => navigate('/staff-profile')} className="p-2 bg-blue-800 rounded-lg hover:bg-blue-700 transition-colors border border-blue-600">
+  1106	              <User size={16} />
+  1107	            </button>
+  1108	            <button onClick={() => navigate('/support')} className="p-2 bg-blue-800 rounded-lg hover:bg-blue-700 transition-colors border border-blue-600">
+  1109	              <Headset size={16} />
+  1110	            </button>
+  1111	            <button onClick={handleLogout} className="p-2 bg-blue-800 rounded-lg hover:bg-blue-700 transition-colors border border-blue-600">
+  1112	            <LogOut size={16} />
+  1113	          </button>
+  1114	          </div>
+  1115	        </div>
+  1116	      </div>
+  1117	
+  1118	      <div className="flex-1 p-6 flex flex-col gap-6 overflow-y-auto pb-20">
+  1119	
+  1120	                <div className="w-full bg-white border border-slate-200 rounded-xl p-4 flex flex-col shadow-sm">
+  1121	          <div className="flex items-center justify-between">
+  1122	            <div className="flex items-center gap-2">
+  1123	              {offlineRecords.length === 0 ? (
+  1124	                <>
+  1125	                  <CheckCircle2 size={18} className="text-emerald-500" />
+  1126	                  <h3 className="font-bold text-sm text-emerald-700 uppercase">Synced</h3>
+  1127	                </>
+  1128	              ) : (
+  1129	                <>
+  1130	                  <AlertTriangle size={18} className={offlineRecords.some(r => r.status === 'Sync Failed') ? 'text-red-500' : 'text-amber-500'} />
+  1131	                  <h3 className={`font-bold text-sm uppercase ${offlineRecords.some(r => r.status === 'Sync Failed') ? 'text-red-700' : 'text-amber-700'}`}>
+  1132	                    {offlineRecords.some(r => r.status === 'Sync Failed') ? 'Sync Failed' : 'Offline Saved'} ({offlineRecords.length})
+  1133	                  </h3>
+  1134	                </>
+  1135	              )}
+  1136	            </div>
+  1137	            
+  1138	            <button 
+  1139	              onClick={syncData}
+  1140	              disabled={isSyncing || !navigator.onLine || offlineRecords.length === 0}
+  1141	              className={`px-3 py-1.5 font-bold rounded-lg text-xs uppercase tracking-wider transition-all shadow-sm ${
+  1142	                offlineRecords.length === 0 ? 'bg-slate-100 text-slate-400' : 
+  1143	                'bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50'
+  1144	              }`}
+  1145	            >
+  1146	              {isSyncing ? 'Syncing...' : 'Sync Now'}
+  1147	            </button>
+  1148	          </div>
+  1149	          
+  1150	          {offlineRecords.length > 0 && (
+  1151	            <div className="flex flex-col gap-2 mt-3 pt-3 border-t border-slate-100">
+  1152	              {offlineRecords.map(r => (
+  1153	                <div key={r.id} className="text-xs bg-slate-50 p-2 rounded border border-slate-200 flex justify-between items-center">
+  1154	                  <div>
+  1155	                    <span className="font-bold text-slate-700">{r.type}</span> - {new Date(r.timestamp).toLocaleTimeString()}
+  1156	                  </div>
+  1157	                  <span className={`font-bold ${r.status === 'Sync Failed' ? 'text-red-500' : 'text-amber-500'}`}>
+  1158	                    {r.status === 'Sync Failed' ? '❌ Failed' : '⏳ Offline Saved'}
+  1159	                  </span>
+  1160	                </div>
+  1161	              ))}
+  1162	              {!navigator.onLine && (
+  1163	                <p className="text-[10px] text-amber-600 font-medium text-center mt-1">Internet connection required to sync.</p>
+  1164	              )}
+  1165	            </div>
+  1166	          )}
+  1167	        </div>
+  1168	{/* Dashboard Status */}
+  1169	        <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+  1170	          <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4 border-b border-slate-100 pb-2">Today's Dashboard</h2>
+  1171	          <div className="grid grid-cols-2 gap-y-4 gap-x-4 text-sm">
+  1172	            <div>
+  1173	              <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-1">Date</p>
+  1174	              <p className="font-medium text-slate-800">{new Date().toLocaleDateString('en-CA')}</p>
+  1175	            </div>
+  1176	            <div>
+  1177	              <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-1">Staff Name</p>
+  1178	              <p className="font-medium text-slate-800">{staffData.name}</p>
+  1179	            </div>
+  1180	            <div>
+  1181	              <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-1">Center</p>
+  1182	              <p className="font-medium text-slate-800 truncate">{centerInfo?.name || '...'}</p>
+  1183	            </div>
+  1184	            <div>
+  1185	              <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-1">IN Time</p>
+  1186	              <p className="font-medium text-slate-800">{attendanceRecord ? attendanceRecord['IN Time'] : '--:--'}</p>
+  1187	            </div>
+  1188	            <div>
+  1189	              <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-1">OUT Time</p>
+  1190	              <p className="font-medium text-slate-800">{attendanceRecord && attendanceRecord['OUT Time'] ? attendanceRecord['OUT Time'] : '--:--'}</p>
+  1191	            </div>
+  1192	            <div className="col-span-2">
+  1193	              <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-1">Status</p>
+  1194	              <div className={`inline-block px-3 py-1.5 rounded-md text-xs font-bold ${statusColor} border`}>
+  1195	                {statusText}
+  1196	              </div>
+  1197	            </div>
+  1198	          </div>
+  1199	        </div>
+  1200	
+  1201	        <motion.div
+  1202	          initial={{ opacity: 0, y: 10 }}
+  1203	          animate={{ opacity: 1, y: 0 }}
+  1204	          className={`p-6 rounded-xl shadow-sm border flex flex-col items-center justify-center text-center gap-4 ${statusBg} border-slate-200 transition-colors`}
+  1205	        >
+  1206	          <div className={`w-16 h-16 ${statusColor} border rounded-lg flex items-center justify-center transition-colors`}>
+  1207	            <CheckCircle2 size={32} />
+  1208	          </div>
+  1209	          <div>
+  1210	            <h2 className="text-lg font-bold text-slate-800 uppercase tracking-wide">
+  1211	              {hasMarkedOut ? 'Attendance Complete' : hasMarkedIn ? 'Ready for OUT' : 'Ready to Mark IN'}
+  1212	            </h2>
+  1213	            <p className="text-slate-500 text-xs font-medium mt-1">Ensure you are at the center location</p>
+  1214	          </div>
+  1215	
+  1216	          {appSettings.attendanceModuleEnabled !== false ? (
+  1217	            <div className="w-full flex flex-col gap-4 mt-2">
+  1218	              {hasMarkedIn ? (
+  1219	                <div className="w-full flex flex-col gap-2">
+  1220	                   <div className="w-full flex items-center gap-2 mb-1">
+  1221	                      <div className="h-[1px] flex-1 bg-slate-200"></div>
+  1222	                      <span className="text-xs font-bold text-slate-500 uppercase">Mark IN</span>
+  1223	                      <div className="h-[1px] flex-1 bg-slate-200"></div>
+  1224	                   </div>
+  1225	                   <button disabled className="w-full py-3 bg-slate-200 text-slate-500 rounded-lg font-bold shadow-sm flex items-center justify-center gap-2 text-sm text-center uppercase cursor-not-allowed border border-slate-300">
+  1226	                     <CheckCircle2 size={20} />
+  1227	                     <span>Attendance Already Marked</span>
+  1228	                   </button>
+  1229	                </div>
+  1230	              ) : (
+  1231	                <div className="w-full flex flex-col gap-2">
+  1232	                   <div className="w-full flex items-center gap-2 mb-1">
+  1233	                      <div className="h-[1px] flex-1 bg-slate-200"></div>
+  1234	                      <span className="text-xs font-bold text-slate-500 uppercase">Mark IN</span>
+  1235	                      <div className="h-[1px] flex-1 bg-slate-200"></div>
+  1236	                   </div>
+  1237	                   <div className="w-full">
+  1238	                       <button 
+  1239	                         onClick={() => startAttendanceProcess('IN')}
+  1240	                         disabled={locationLoading || !centerInfo}
+  1241	                         className={`w-full py-4 px-2 rounded-xl font-bold shadow-sm flex flex-col items-center justify-center gap-2 text-sm text-center uppercase transition-all ${
+  1242	                           (!centerInfo)
+  1243	                             ? 'bg-slate-200 text-slate-500 cursor-not-allowed border border-slate-300' 
+  1244	                             : 'bg-emerald-600 text-white hover:bg-emerald-700'
+  1245	                         } active:scale-[0.98] ${(locationLoading && attendanceType === 'IN') ? 'opacity-70' : ''}`}
+  1246	                       >
+  1247	                         <Camera size={24} />
+  1248	                         <span>{(locationLoading && attendanceType === 'IN') ? 'Locating...' : 'Selfie Attendance (IN)'}</span>
+  1249	                       </button>
+  1250	                   </div>
+  1251	                </div>
+  1252	              )}
+  1253	              {hasMarkedOut && (
+  1254	                <div className="w-full bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-center">
+  1255	                  <div className="flex justify-center mb-2">
+  1256	                    <CheckCircle2 size={32} className="text-emerald-500" />
+  1257	                  </div>
+  1258	                  <h3 className="text-sm font-bold text-emerald-800 mb-1">⚠️ Today's attendance has already been completed.</h3>
+  1259	                  <p className="text-xs text-emerald-600 font-medium">You have already marked both IN and OUT attendance for today.</p>
+  1260	                </div>
+  1261	              )}
+  1262	              {hasMarkedIn && !hasMarkedOut && (
+  1263	                <div className="w-full flex flex-col gap-2">
+  1264	                   <div className="w-full flex items-center gap-2 mb-1">
+  1265	                      <div className="h-[1px] flex-1 bg-slate-200"></div>
+  1266	                      <span className="text-xs font-bold text-slate-500 uppercase">Mark OUT</span>
+  1267	                      <div className="h-[1px] flex-1 bg-slate-200"></div>
+  1268	                   </div>
+  1269	                   <div className="w-full">
+  1270	                       <button 
+  1271	                         onClick={() => startAttendanceProcess('OUT')}
+  1272	                         disabled={locationLoading || !centerInfo}
+  1273	                         className={`w-full py-4 px-2 rounded-xl font-bold shadow-sm flex flex-col items-center justify-center gap-2 text-sm text-center uppercase transition-all ${
+  1274	                           (!centerInfo)
+  1275	                             ? 'bg-slate-200 text-slate-500 cursor-not-allowed border border-slate-300' 
+  1276	                             : 'bg-amber-600 text-white hover:bg-amber-700'
+  1277	                         } active:scale-[0.98] ${(locationLoading && attendanceType === 'OUT') ? 'opacity-70' : ''}`}
+  1278	                       >
+  1279	                         <Camera size={24} />
+  1280	                         <span>{(locationLoading && attendanceType === 'OUT') ? 'Locating...' : 'Selfie Attendance (OUT)'}</span>
+  1281	                       </button>
+  1282	                   </div>
+  1283	                </div>
+  1284	              )}
+  1285	          </div>) : (<div className="w-full p-3 bg-red-50 text-red-600 text-xs text-center font-bold rounded-lg border border-red-100 mt-2 uppercase">Attendance Module Disabled</div>)}
+  1286	          <div className="w-full mt-4 flex gap-2">
+  1287	            {appSettings.odModuleEnabled !== false && (<button
+  1288	              onClick={() => setShowOfficialDuty(true)}
+  1289	              className="w-full py-3 rounded-lg font-bold shadow-sm flex items-center justify-center gap-2 text-sm uppercase transition-all bg-indigo-600 text-white hover:bg-indigo-700 active:scale-[0.98]"
+  1290	            >
+  1291	              <MapPin size={20} />
+  1292	              <span>Apply Official Duty</span>
+  1293	            </button>)}
+  1294	            {appSettings.leaveModuleEnabled !== false && (<button 
+  1295	              onClick={() => navigate('/staff/leave')}
+  1296	              className="flex-1 py-4 bg-indigo-50 border border-indigo-100 rounded-xl text-indigo-700 font-bold uppercase tracking-wider text-[10px] flex flex-col items-center justify-center gap-2 hover:bg-indigo-100 transition-colors"
+  1297	            >
+  1298	              <Calendar size={20} />
+  1299	              <span>Leave Management</span>
+  1300	            </button>)}
+  1301	
+  1302	          </div>
+  1303	        </motion.div>
+  1304	        
+  1305	        
+  1306	        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col gap-3">
+  1307	          <div className="flex items-center justify-between">
+  1308	             <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wide">Live Map & Distance</h3>
+  1309	             {liveLocation?.distance !== null && liveLocation?.distance !== undefined && (
+  1310	               <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-1 rounded font-bold uppercase">{Math.round(liveLocation.distance)} meters away</span>
+  1311	             )}
+  1312	          </div>
+  1313	          
+  1314	          </div>
+  1315	          <div className="w-full bg-slate-100 rounded-lg p-4 text-center border border-slate-200">
+  1316	             {liveLocation ? (
+  1317	                 <div className="text-sm font-bold text-slate-700">
+  1318	                    <p>Lat: {liveLocation.lat.toFixed(6)}</p>
+  1319	                    <p>Lng: {liveLocation.lng.toFixed(6)}</p>
+  1320	                 </div>
+  1321	             ) : locationError ? (
+  1322	               <div className="w-full flex flex-col items-center justify-center text-red-500 gap-2 text-center">
+  1323	                 <AlertTriangle size={24} />
+  1324	                 <span className="text-xs font-medium">{locationError}</span>
+  1325	                 <button onClick={fetchLiveLocation} className="mt-2 text-[10px] uppercase tracking-wider font-bold bg-red-100 px-3 py-1.5 rounded-lg border border-red-200 hover:bg-red-200 transition-colors">
+  1326	                   Retry Location
+  1327	                 </button>
+  1328	               </div>
+  1329	             ) : (
+  1330	               <div className="w-full flex flex-col items-center justify-center text-slate-400 gap-2">
+  1331	                 <MapPin size={24} className="opacity-50" />
+  1332	                 <span className="text-xs uppercase font-bold tracking-wider">Locating...</span>
+  1333	               </div>
+  1334	             )}
+  1335	          </div>
+  1336	        </div>
+  1337	
+  1338	        {/* OD Requests History */}
+  1339	        {odRequests.length > 0 && (
+  1340	          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col gap-3 mt-4">
+  1341	            <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wide border-b border-slate-100 pb-2">My Official Duty Requests</h3>
+  1342	            <div className="flex flex-col gap-3">
+  1343	              {odRequests.map(req => (
+  1344	                <div key={req.id} className="bg-slate-50 p-3 rounded-lg border border-slate-100 flex flex-col gap-2 text-xs">
+  1345	                  <div className="flex justify-between items-start">
+  1346	                    <div>
+  1347	                      <p className="font-bold text-slate-800">{req['Duty Type']}</p>
+  1348	                      <p className="text-slate-500">{req['Date']} • {req['Time']}</p>
+  1349	                    </div>
+  1350	                    <div className={`px-2 py-1 rounded text-[10px] uppercase font-bold tracking-wider border ${req['Status'] === 'Approved' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : req['Status'] === 'Rejected' ? 'bg-red-50 text-red-600 border-red-100' : 'bg-amber-50 text-amber-600 border-amber-100'}`}>
+  1351	                      {req['Status']}
+  1352	                    </div>
+  1353	                  </div>
+  1354	                  {req['Reason'] && (
+  1355	                    <p className="text-slate-600"><span className="font-bold text-slate-500">Reason:</span> {req['Reason']}</p>
+  1356	                  )}
+  1357	                  {req['Remarks'] && (
+  1358	                    <p className="text-slate-600"><span className="font-bold text-slate-500">Remarks:</span> {req['Remarks']}</p>
+  1359	                  )}
+  1360	                </div>
+  1361	              ))}
+  1362	            </div>
+  1363	          </div>
+  1364	        )}
+  1365	      {/* Official Duty Modal */}
+  1366	      <AnimatePresence>
+  1367	        {showOfficialDuty && (
+  1368	           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[90] flex items-center justify-center p-4 overflow-y-auto">
+  1369	             <motion.div 
+  1370	               initial={{ opacity: 0, scale: 0.95 }}
+  1371	               animate={{ opacity: 1, scale: 1 }}
+  1372	               exit={{ opacity: 0, scale: 0.95 }}
+  1373	               className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-md flex flex-col overflow-hidden my-8"
+  1374	             >
+  1375	               <div className="p-4 bg-indigo-50 border-b border-indigo-100 flex items-start gap-3">
+  1376	                 <div className="bg-indigo-100 text-indigo-600 p-2 rounded-lg shrink-0">
+  1377	                   <MapPin size={24} />
+  1378	                 </div>
+  1379	                 <div>
+  1380	                   <h3 className="font-bold text-indigo-700 uppercase tracking-wide text-sm">Official Duty Request</h3>
+  1381	                   <p className="text-xs text-indigo-600 font-medium mt-0.5">Submit request when outside center</p>
+  1382	                 </div>
+  1383	               </div>
+  1384	               
+  1385	               <div className="p-5 flex flex-col gap-4">
+  1386	                 <div className="grid grid-cols-2 gap-4 text-xs">
+  1387	                   <div>
+  1388	                     <span className="text-slate-500 font-bold block mb-1">Staff Name</span>
+  1389	                     <span className="font-medium text-slate-800">{staffData?.name}</span>
+  1390	                   </div>
+  1391	                   <div>
+  1392	                     <span className="text-slate-500 font-bold block mb-1">Center Name</span>
+  1393	                     <span className="font-medium text-slate-800">{centerInfo?.name}</span>
+  1394	                   </div>
+  1395	                 </div>
+  1396	
+  1397	                 <div className="flex flex-col gap-1.5">
+  1398	                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider ml-1">Duty Type *</label>
+  1399	                   <input 
+  1400	    type="text"
+  1401	    list="duty-list"
+  1402	    value={odDutyType}
+  1403	    onChange={e => setOdDutyType(e.target.value)}
+  1404	    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+  1405	    placeholder="Type or select duty type..."
+  1406	    required
+  1407	  />
+  1408	  <datalist id="duty-list">
+  1409	    <option value="Field Visit" />
+  1410	    <option value="Training" />
+  1411	    <option value="Meeting" />
+  1412	    <option value="Inspection" />
+  1413	    <option value="Mobilization" />
+  1414	    <option value="Government Work" />
+  1415	    <option value="Office Work" />
+  1416	    <option value="Exam Duty" />
+  1417	    <option value="Official Tour" />
+  1418	    <option value="Other" />
+  1419	  </datalist>
+  1420	                 </div>
+  1421	
+  1422	                 <div className="flex flex-col gap-1.5">
+  1423	                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider ml-1">Reason *</label>
+  1424	                   <input 
+  1425	                     type="text" 
+  1426	                     value={odReason} 
+  1427	                     onChange={(e) => setOdReason(e.target.value)}
+  1428	                     placeholder="Brief reason for official duty"
+  1429	                     className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium outline-none focus:border-indigo-500"
+  1430	                   />
+  1431	                 </div>
+  1432	
+  1433	                 <div className="flex flex-col gap-1.5">
+  1434	                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider ml-1">Remarks</label>
+  1435	                   <textarea 
+  1436	                     value={odRemarks} 
+  1437	                     onChange={(e) => setOdRemarks(e.target.value)}
+  1438	                     placeholder="Additional details..."
+  1439	                     rows={2}
+  1440	                     className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium outline-none focus:border-indigo-500 resize-none"
+  1441	                   ></textarea>
+  1442	                 </div>
+  1443	
+  1444	                 <div className="flex flex-col gap-1.5">
+  1445	                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider ml-1">Supporting Photo (Optional)</label>
+  1446	                   <input 
+  1447	                     type="file" 
+  1448	                     accept="image/*"
+  1449	                     capture="environment"
+  1450	                     onChange={handlePhotoUpload}
+  1451	                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm"
+  1452	                   />
+  1453	                   {odPhoto && <img src={odPhoto} alt="Preview" className="mt-2 h-24 object-cover rounded-md border" />}
+  1454	                 </div>
+  1455	
+  1456	                 <div className="flex items-center gap-3 mt-2">
+  1457	                   <button 
+  1458	                     onClick={submitOfficialDuty}
+  1459	                     disabled={!odDutyType || !odReason || submitting}
+  1460	                     className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-lg text-xs uppercase tracking-wide transition-colors disabled:opacity-50"
+  1461	                   >
+  1462	                     {submitting ? 'Submitting...' : 'Submit Request'}
+  1463	                   </button>
+  1464	                   <button 
+  1465	                     onClick={() => setShowOfficialDuty(false)}
+  1466	                     className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-2.5 rounded-lg text-xs uppercase tracking-wide transition-colors"
+  1467	                   >
+  1468	                     Cancel
+  1469	                   </button>
+  1470	                 </div>
+  1471	               </div>
+  1472	             </motion.div>
+  1473	           </div>
+  1474	        )}
+  1475	      </AnimatePresence>
+  1476	
+  1477	
+  1478	      
+  1479	      {showDailyReportPopup && (
+  1480	        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[100]">
+  1481	          <div className="bg-white rounded-2xl w-full max-w-sm flex flex-col max-h-[90vh]">
+  1482	            <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-emerald-50">
+  1483	              <h2 className="font-bold text-emerald-800">Today's Attendance Report</h2>
+  1484	              <button onClick={() => setShowDailyReportPopup(false)} className="text-slate-400 hover:text-slate-600">
+  1485	                <X size={20} />
+  1486	              </button>
+  1487	            </div>
+  1488	            <div className="p-6 overflow-y-auto">
+  1489	              <div className="space-y-4">
+  1490	                <div>
+  1491	                  <p className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1">Date</p>
+  1492	                  <p className="font-medium text-slate-900">{attendanceRecord?.['Date']}</p>
+  1493	                </div>
+  1494	                <div>
+  1495	                  <p className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1">Staff Name</p>
+  1496	                  <p className="font-medium text-slate-900">{attendanceRecord?.['Staff Name'] || staffData.name}</p>
+  1497	                </div>
+  1498	                <div>
+  1499	                  <p className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1">Center Name</p>
+  1500	                  <p className="font-medium text-slate-900">{attendanceRecord?.['Center Name'] || centerInfo?.name}</p>
+  1501	                </div>
+  1502	                <div className="flex gap-4">
+  1503	                  <div className="flex-1">
+  1504	                    <p className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1">IN Time</p>
+  1505	                    <p className="font-medium text-slate-900">{attendanceRecord?.['IN Time']}</p>
+  1506	                  </div>
+  1507	                  <div className="flex-1">
+  1508	                    <p className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1">OUT Time</p>
+  1509	                    <p className="font-medium text-slate-900">{attendanceRecord?.['OUT Time'] || '-'}</p>
+  1510	                  </div>
+  1511	                </div>
+  1512	                <div>
+  1513	                  <p className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1">Total Working Hours</p>
+  1514	                  <p className="font-medium text-slate-900">
+  1515	                                        {attendanceRecord?.['IN Time'] && attendanceRecord?.['OUT Time'] 
+  1516	                      ? (() => {
+  1517	                          const inParts = attendanceRecord['IN Time'].split(':');
+  1518	                          const outParts = attendanceRecord['OUT Time'].split(':');
+  1519	                          if (inParts.length >= 2 && outParts.length >= 2) {
+  1520	                            const inHrs = parseInt(inParts[0]), inMins = parseInt(inParts[1]);
+  1521	                            const outHrs = parseInt(outParts[0]), outMins = parseInt(outParts[1]);
+  1522	                            
+  1523	                            let diffMs = (outHrs * 60 + outMins) * 60000 - (inHrs * 60 + inMins) * 60000;
+  1524	                            if (diffMs < 0) diffMs += 24 * 60 * 60 * 1000;
+  1525	                            
+  1526	                            const hrs = Math.floor(diffMs / 3600000);
+  1527	                            const mins = Math.floor((diffMs % 3600000) / 60000);
+  1528	                            return `${hrs}h ${mins}m`;
+  1529	                          }
+  1530	                          return 'N/A';
+  1531	                        })()
+  1532	                      : 'N/A'}
+  1533	                  </p>
+  1534	                </div>
+  1535	                <div>
+  1536	                  <p className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1">Attendance Status</p>
+  1537	                  <p className="font-medium text-emerald-600 font-bold">{attendanceRecord?.['Attendance Status']}</p>
+  1538	                </div>
+  1539	              </div>
+  1540	            </div>
+  1541	            <div className="p-4 border-t border-slate-100 flex gap-3">
+  1542	              <button onClick={() => setShowDailyReportPopup(false)} className="flex-1 py-3 bg-slate-100 text-slate-700 font-bold uppercase tracking-wider text-sm rounded-xl hover:bg-slate-200">
+  1543	                Close
+  1544	              </button>
+  1545	            </div>
+  1546	          </div>
+  1547	        </div>
+  1548	      )}
+  1549	
+  1550	      {showReportPopup && (
+  1551	        <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+  1552	          <motion.div
+  1553	            initial={{ opacity: 0, scale: 0.9 }}
+  1554	            animate={{ opacity: 1, scale: 1 }}
+  1555	            className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl"
+  1556	          >
+  1557	            <div className="bg-purple-600 p-4 text-white text-center">
+  1558	              <h3 className="font-bold text-lg uppercase tracking-wider">Reports Assigned Today</h3>
+  1559	              <p className="text-xs text-purple-200 mt-1">Please fill the assigned reports</p>
+  1560	            </div>
+  1561	            <div className="p-4 flex flex-col gap-3 max-h-60 overflow-y-auto">
+  1562	              {assignedReports.map((report, idx) => (
+  1563	                <div key={idx} className="bg-slate-50 p-3 rounded-lg border border-slate-200 flex justify-between items-center">
+  1564	                  <span className="text-sm font-bold text-slate-700">{report}</span>
+  1565	                  <button 
+  1566	                    onClick={() => { setShowReportPopup(false); alert(`Opening ${report}...`); }}
+  1567	                    className="bg-purple-100 hover:bg-purple-200 text-purple-700 px-3 py-1.5 rounded text-xs font-bold uppercase transition-colors"
+  1568	                  >
+  1569	                    Fill Report
+  1570	                  </button>
+  1571	                </div>
+  1572	              ))}
+  1573	            </div>
+  1574	            <div className="p-4 border-t border-slate-100 flex gap-2">
+  1575	              <button 
+  1576	                onClick={() => setShowReportPopup(false)}
+  1577	                className="flex-1 p-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs uppercase tracking-wider rounded-lg transition-colors"
+  1578	              >
+  1579	                Remind Me Later
+  1580	              </button>
+  1581	              <button 
+  1582	                onClick={() => setShowReportPopup(false)}
+  1583	                className="flex-1 p-3 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs uppercase tracking-wider rounded-lg transition-colors"
+  1584	              >
+  1585	                Close
+  1586	              </button>
+  1587	            </div>
+  1588	          </motion.div>
+  1589	        </div>
+  1590	      )}
+  1591	
+  1592	      <AttendanceSuccessModal 
+  1593	        isOpen={!!successPopup}
+  1594	        title={successPopup?.title || ''}
+  1595	        message={successPopup?.subtitle || ''}
+  1596	        details={successPopup?.details}
+  1597	        onOk={() => {
+  1598	          const type = successPopup?.type;
+  1599	          setSuccessPopup(null);
+  1600	          if (type === 'OUT') {
+  1601	            setTimeout(() => {
+  1602	              setReportReminderPopup(true);
+  1603	            }, 1000);
+  1604	          }
+  1605	        }}
+  1606	      />
+  1607	
+  1608	      <AnimatePresence>
+  1609	        {reportReminderPopup && (
+  1610	          <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[100]">
+  1611	            <motion.div 
+  1612	              initial={{ opacity: 0, scale: 0.9 }}
+  1613	              animate={{ opacity: 1, scale: 1 }}
+  1614	              exit={{ opacity: 0, scale: 0.9 }}
+  1615	              className="bg-white rounded-2xl w-full max-w-sm p-6 text-center shadow-xl"
+  1616	            >
+  1617	              <h2 className="text-lg font-bold text-slate-800 mb-4">📋 Report Reminder</h2>
+  1618	              <p className="text-sm text-slate-600 mb-1">Please fill today's Report.</p>
+  1619	              <p className="text-sm text-slate-600 font-bold mb-6">Date: {new Date().toLocaleDateString('en-GB')}</p>
+  1620	              
+  1621	              <div className="bg-slate-50 border border-slate-100 p-4 rounded-xl mb-6 text-center">
+  1622	                <p className="text-sm text-slate-700 font-medium">Sorry!</p>
+  1623	                <p className="text-sm text-slate-600 mt-1">Report Management is currently under maintenance.</p>
+  1624	                <p className="text-sm text-slate-600 mt-1">Coming Soon... 🫣</p>
+  1625	              </div>
+  1626	
+  1627	              <button
+  1628	                onClick={async () => {
+  1629	                  setReportReminderPopup(false);
+  1630	                  // Update DB to mark report reminder shown
+  1631	                  if (attendanceRecord?.id) {
+  1632	                    try {
+  1633	                      const { doc, updateDoc } = await import('firebase/firestore');
+  1634	                      const { db } = await import('../firebase');
+  1635	                      await updateDoc(doc(db, 'attendance', attendanceRecord.id), {
+  1636	                        'Report Reminder Shown': true
+  1637	                      });
+  1638	                    } catch (e) {
+  1639	                      console.error('Error updating report reminder status:', e);
+  1640	                    }
+  1641	                  }
+  1642	                }}
+  1643	                className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold uppercase tracking-wider text-sm hover:bg-indigo-700 transition-colors"
+  1644	              >
+  1645	                OK
+  1646	              </button>
+  1647	            </motion.div>
+  1648	          </div>
+  1649	        )}
+  1650	      </AnimatePresence>
+  1651	    </div>
+  1652	  );
+  1653	}

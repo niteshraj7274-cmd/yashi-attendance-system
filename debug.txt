@@ -1,0 +1,352 @@
+     1	import React, { useState, useEffect } from 'react';
+     2	import { useNavigate, useParams } from 'react-router-dom';
+     3	import { ArrowLeft, CheckCircle2, XCircle, Clock, MapPin, AlertCircle, FileText, Plus, UserCircle } from 'lucide-react';
+     4	import { collection, query, where, getDocs, doc, serverTimestamp, addDoc, onSnapshot, getDoc } from 'firebase/firestore';
+     5	import { db } from '../firebase';
+     6	import { motion, AnimatePresence } from 'motion/react';
+     7	
+     8	export default function CentreOfficialDutyScreen() {
+     9	  const navigate = useNavigate();
+    10	  const { centerId } = useParams();
+    11	  const [requests, setRequests] = useState<any[]>([]);
+    12	  const [loading, setLoading] = useState(true);
+    13	  const [centerName, setCenterName] = useState('');
+    14	  const [centerCode, setCenterCode] = useState('');
+    15	  
+    16	  const [statusFilter, setStatusFilter] = useState('Pending Approval');
+    17	  
+    18	  // New Request State
+    19	  const [showForm, setShowForm] = useState(false);
+    20	  const [submitting, setSubmitting] = useState(false);
+    21	  const [staffList, setStaffList] = useState<any[]>([]);
+    22	  const [selectedStaffId, setSelectedStaffId] = useState('');
+    23	  const [dutyType, setDutyType] = useState('Field Visit');
+    24	  const [otherDutyType, setOtherDutyType] = useState('');
+    25	  const [date, setDate] = useState('');
+    26	  const [time, setTime] = useState('');
+    27	  const [reason, setReason] = useState('');
+    28	  const [location, setLocation] = useState('');
+    29	
+    30	  useEffect(() => {
+    31	    if (!centerId) {
+    32	      navigate('/centre-login');
+    33	      return;
+    34	    }
+    35	    
+    36	    // Get Center Name
+    37	    const getCenter = async () => {
+    38	      const centerDoc = await getDoc(doc(db, 'centers', centerId));
+    39	      if (centerDoc.exists()) {
+    40	        setCenterName(centerDoc.data().name);
+    41	        setCenterCode(centerDoc.data().code);
+    42	      }
+    43	      
+    44	      // Get Staff List for this center
+    45	      const staffSnap = await getDocs(query(collection(db, 'staff'), where('centerId', '==', centerId)));
+    46	      const staffData: any[] = [];
+    47	      staffSnap.forEach(s => {
+    48	        const data = s.data();
+    49	        if (data.status !== 'Inactive') {
+    50	          staffData.push({ id: s.id, ...data });
+    51	        }
+    52	      });
+    53	      setStaffList(staffData);
+    54	    };
+    55	    getCenter();
+    56	
+    57	    // Query Official Duty requests for this center
+    58	    const q = query(
+    59	      collection(db, 'official_duty_requests'),
+    60	      where('Center ID', '==', centerId)
+    61	    );
+    62	
+    63	    const unsubscribe = onSnapshot(q, (snapshot) => {
+    64	      const data: any[] = [];
+    65	      snapshot.forEach(doc => {
+    66	        data.push({ id: doc.id, ...doc.data() });
+    67	      });
+    68	      data.sort((a, b) => {
+    69	         const timeA = a.timestamp?.toMillis ? a.timestamp.toMillis() : 0;
+    70	         const timeB = b.timestamp?.toMillis ? b.timestamp.toMillis() : 0;
+    71	         return timeB - timeA;
+    72	      });
+    73	      setRequests(data);
+    74	      setLoading(false);
+    75	    });
+    76	
+    77	    return () => unsubscribe();
+    78	  }, [centerId, navigate]);
+    79	
+    80	  const handleSubmit = async (e: React.FormEvent) => {
+    81	    e.preventDefault();
+    82	    if (!selectedStaffId || !date || !time || !reason || !location) return alert('Please fill all fields');
+    83	    
+    84	    setSubmitting(true);
+    85	    try {
+    86	      const staff = staffList.find(s => (s.name + ' (' + s.staffId + ')') === selectedStaffId || s.name === selectedStaffId);
+    87	      
+    88	      const newRequest = {
+    89	        staffUid: staff ? staff.id : 'custom-' + Date.now(),
+    90	        'Staff ID': staff ? (staff.staffId || '') : 'N/A',
+    91	        'Staff Name': staff ? (staff.name || '') : selectedStaffId,
+    92	        'Center ID': centerId,
+    93	        'Center Code': centerCode,
+    94	        'Center Name': centerName,
+    95	        'Date': date,
+    96	        'Time': time,
+    97	        'Duty Type': dutyType,
+    98	        'Reason': reason,
+    99	        'Location': location,
+   100	        Status: 'Pending Approval',
+   101	        'Request Date & Time': new Date().toISOString(),
+   102	        timestamp: serverTimestamp()
+   103	      };
+   104	      
+   105	      await addDoc(collection(db, 'official_duty_requests'), newRequest);
+   106	      
+   107	      setShowForm(false);
+   108	      setSelectedStaffId('');
+   109	      setOtherDutyType('');
+   110	      setDate('');
+   111	      setTime('');
+   112	      setReason('');
+   113	      setLocation('');
+   114	    } catch (err) {
+   115	      console.error(err);
+   116	      alert('Failed to submit request');
+   117	    } finally {
+   118	      setSubmitting(false);
+   119	    }
+   120	  };
+   121	
+   122	  const filteredRequests = requests.filter(r => {
+   123	    return r.Status === statusFilter;
+   124	  });
+   125	
+   126	  if (loading) {
+   127	    return (
+   128	      <div className="flex flex-col min-h-screen bg-slate-50 items-center justify-center font-sans">
+   129	        <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+   130	      </div>
+   131	    );
+   132	  }
+   133	
+   134	  return (
+   135	    <div className="flex flex-col min-h-screen bg-slate-50 text-slate-900 font-sans overflow-hidden">
+   136	      <div className="bg-blue-900 text-white h-20 flex items-center px-6 shadow-md gap-4 z-10 shrink-0">
+   137	        <button onClick={() => navigate(-1)} className="p-2 -ml-2 rounded-full hover:bg-white/10 transition-colors">
+   138	          <ArrowLeft size={24} />
+   139	        </button>
+   140	        <div className="flex-1">
+   141	          <h1 className="text-xl font-bold tracking-tight uppercase truncate">Official Duty</h1>
+   142	          <p className="text-[10px] text-blue-200 uppercase tracking-widest mt-0.5 truncate">{centerName}</p>
+   143	        </div>
+   144	        <button onClick={() => setShowForm(true)} className="p-2 bg-blue-700 hover:bg-blue-600 rounded-full transition-colors">
+   145	          <Plus size={20} />
+   146	        </button>
+   147	      </div>
+   148	
+   149	      <div className="bg-white px-4 py-3 shadow-sm z-20 flex gap-2 overflow-x-auto border-b border-slate-200 hide-scrollbar shrink-0">
+   150	        {['Pending Approval', 'Approved', 'Rejected'].map(status => (
+   151	          <button
+   152	            key={status}
+   153	            onClick={() => setStatusFilter(status)}
+   154	            className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all ${
+   155	              statusFilter === status 
+   156	                ? 'bg-blue-600 text-white shadow-md' 
+   157	                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+   158	            }`}
+   159	          >
+   160	            {status}
+   161	          </button>
+   162	        ))}
+   163	      </div>
+   164	
+   165	      <div className="flex-1 overflow-y-auto p-4 pb-24">
+   166	        {filteredRequests.length === 0 ? (
+   167	          <div className="flex flex-col items-center justify-center py-20 text-slate-400">
+   168	            <FileText size={48} className="mb-4 opacity-20" />
+   169	            <p className="font-medium text-sm uppercase tracking-widest">No requests found</p>
+   170	          </div>
+   171	        ) : (
+   172	          <div className="flex flex-col gap-4">
+   173	            
+   174	              {filteredRequests.map(req => (
+   175	                <div
+   176	                  key={req.id}
+   177	className="bg-white rounded-xl shadow-sm border border-slate-200 p-4"
+   178	                >
+   179	                  <div className="flex justify-between items-start mb-3">
+   180	                    <div>
+   181	                      <h3 className="font-bold text-slate-800 text-base">{req['Staff Name']}</h3>
+   182	                      <p className="text-xs text-slate-500 font-medium">{req['Staff ID']} • {req['Duty Type']}</p>
+   183	                    </div>
+   184	                    <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest ${
+   185	                      req.Status === 'Pending Approval' ? 'bg-amber-100 text-amber-700' :
+   186	                      req.Status === 'Approved' ? 'bg-green-100 text-green-700' :
+   187	                      'bg-red-100 text-red-700'
+   188	                    }`}>
+   189	                      {req.Status}
+   190	                    </div>
+   191	                  </div>
+   192	                  
+   193	                  <div className="flex items-center gap-2 text-sm text-slate-600 bg-slate-50 p-2 rounded-lg mb-3">
+   194	                    <MapPin size={16} className="text-blue-500 shrink-0" />
+   195	                    <span className="font-medium truncate">{req['Location'] || req['Center Name']}</span>
+   196	                  </div>
+   197	                  
+   198	                  <div className="grid grid-cols-2 gap-3 mb-3">
+   199	                    <div className="bg-slate-50 p-2 rounded-lg">
+   200	                      <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Date</p>
+   201	                      <p className="text-sm font-semibold">{req['Date']}</p>
+   202	                    </div>
+   203	                    <div className="bg-slate-50 p-2 rounded-lg">
+   204	                      <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Time</p>
+   205	                      <p className="text-sm font-semibold">{req['Time']}</p>
+   206	                    </div>
+   207	                  </div>
+   208	
+   209	                  <div className="bg-amber-50 text-amber-800 p-3 rounded-lg text-sm">
+   210	                    <span className="font-bold uppercase tracking-wider text-[10px] block mb-1">Reason</span>
+   211	                    {req['Reason']}
+   212	                  </div>
+   213	                  
+   214	                  {req['Admin Remarks'] && (
+   215	                    <div className="bg-blue-50 text-blue-800 p-3 rounded-lg text-sm mt-3 border border-blue-100">
+   216	                      <span className="font-bold uppercase tracking-wider text-[10px] block mb-1">Admin Remarks</span>
+   217	                      {req['Admin Remarks']}
+   218	                    </div>
+   219	                  )}
+   220	                </div>
+   221	              ))}
+   222	            
+   223	          </div>
+   224	        )}
+   225	      </div>
+   226	      
+   227	      {/* Create Request Modal */}
+   228	      
+   229	        {showForm && (
+   230	          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex flex-col justify-end sm:justify-center sm:items-center">
+   231	            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl shadow-xl flex flex-col max-h-[90vh]"
+   232	            >
+   233	              <div className="bg-blue-900 p-4 rounded-t-2xl flex items-center justify-between text-white shrink-0">
+   234	                <h3 className="font-bold uppercase tracking-wide text-sm">New Official Duty</h3>
+   235	                <button onClick={() => setShowForm(false)} className="p-1 hover:bg-white/20 rounded-full transition-colors">
+   236	                  <XCircle size={20} />
+   237	                </button>
+   238	              </div>
+   239	              
+   240	              <form onSubmit={handleSubmit} className="p-5 overflow-y-auto flex-1 flex flex-col gap-4">
+   241	                <div>
+   242	                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Select Staff</label>
+   243	                  <input 
+   244	    type="text"
+   245	    list="staff-list"
+   246	    value={selectedStaffId}
+   247	    onChange={e => setSelectedStaffId(e.target.value)}
+   248	    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+   249	    placeholder="Type or select staff name..."
+   250	    required
+   251	  />
+   252	  <datalist id="staff-list">
+   253	    {staffList.map(s => (
+   254	      <option key={s.id} value={s.name + ' (' + s.staffId + ')'} />
+   255	    ))}
+   256	  </datalist>
+   257	                </div>
+   258	                
+   259	                <div>
+   260	                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Duty Type</label>
+   261	                  <input 
+   262	    type="text"
+   263	    list="duty-list"
+   264	    value={dutyType}
+   265	    onChange={e => setDutyType(e.target.value)}
+   266	    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+   267	    placeholder="Type or select duty type..."
+   268	    required
+   269	  />
+   270	  <datalist id="duty-list">
+   271	    <option value="Field Visit" />
+   272	    <option value="Training" />
+   273	    <option value="Meeting" />
+   274	    <option value="Inspection" />
+   275	    <option value="Mobilization" />
+   276	    <option value="Government Work" />
+   277	    <option value="Office Work" />
+   278	    <option value="Exam Duty" />
+   279	    <option value="Official Tour" />
+   280	    <option value="Other" />
+   281	  </datalist>
+   282	                </div>
+   283	                
+   284	                      placeholder="Specify duty type..."
+   285	                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+   286	                      required
+   287	                    />
+   288	                  </div>
+   289	                )}
+   290	                
+   291	                <div className="grid grid-cols-2 gap-4">
+   292	                  <div>
+   293	                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Date</label>
+   294	                    <input 
+   295	                      type="date" 
+   296	                      value={date}
+   297	                      onChange={e => setDate(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+   298	                      required
+   299	                    />
+   300	                  </div>
+   301	                  <div>
+   302	                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Time</label>
+   303	                    <input 
+   304	                      type="time" 
+   305	                      value={time}
+   306	                      onChange={e => setTime(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+   307	                      required
+   308	                    />
+   309	                  </div>
+   310	                </div>
+   311	                
+   312	                <div>
+   313	                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Location</label>
+   314	                  <input 
+   315	                    type="text" 
+   316	                    value={location}
+   317	                    onChange={e => setLocation(e.target.value)}
+   318	                    placeholder="Where is the duty?"
+   319	                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+   320	                    required
+   321	                  />
+   322	                </div>
+   323	                
+   324	                <div>
+   325	                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Reason / Purpose</label>
+   326	                  <textarea 
+   327	                    value={reason}
+   328	                    onChange={e => setReason(e.target.value)}
+   329	                    placeholder="Briefly describe the purpose..."
+   330	                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none h-20"
+   331	                    required
+   332	                  ></textarea>
+   333	                </div>
+   334	                
+   335	                <button
+   336	                  type="submit"
+   337	                  disabled={submitting} className="mt-2 w-full bg-blue-700 hover:bg-blue-800 text-white font-bold py-3.5 rounded-lg shadow-sm transition-all active:scale-[0.98] disabled:opacity-70 flex justify-center items-center gap-2 text-sm uppercase tracking-wider"
+   338	                >
+   339	                  {submitting ? (
+   340	                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+   341	                  ) : (
+   342	                    <><CheckCircle2 size={18} /> Submit Request</>
+   343	                  )}
+   344	                </button>
+   345	              </form>
+   346	            </div>
+   347	          </div>
+   348	        )}
+   349	      
+   350	    </div>
+   351	  );
+   352	}

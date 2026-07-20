@@ -1,0 +1,111 @@
+      setLocationLoading(false);
+    }
+  };
+
+
+  const startAttendanceProcess = async (type: 'IN' | 'OUT') => {
+    if (type === 'IN' && hasMarkedIn) return;
+    if (type === 'OUT' && hasMarkedOut) return;
+    if (!centerInfo) {
+      alert("Center information not loaded yet.");
+      return;
+    }
+    setAttendanceType(type);
+    processLocationOnlyAttendance(type);
+  };
+
+  const fetchLocationWithTimeoutAndFallback = (onSuccess: any, onError: any, options?: any) => {
+        if (liveLocation && Date.now() - (JSON.parse(sessionStorage.getItem('lastLocation') || '{}').timestamp || 0) < 300000) {
+           console.log("Using cached liveLocation");
+           onSuccess({ coords: { latitude: liveLocation.lat, longitude: liveLocation.lng, accuracy: 10 } });
+           return;
+        }
+
+        const timeoutId = setTimeout(() => {
+          if (liveLocation) {
+            console.warn("Location fetching timed out. Using fallback liveLocation.");
+            onSuccess({ coords: { latitude: liveLocation.lat, longitude: liveLocation.lng, accuracy: 10 } });
+          } else {
+            onError({ code: 3, message: "Timeout" });
+          }
+        }, 6000);
+
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            clearTimeout(timeoutId);
+            onSuccess(position);
+          },
+          (error) => {
+            clearTimeout(timeoutId);
+            if (liveLocation) {
+              console.warn("Location error, using fallback liveLocation.");
+              onSuccess({ coords: { latitude: liveLocation.lat, longitude: liveLocation.lng, accuracy: 10 } });
+            } else {
+              onError(error);
+            }
+          },
+          options || { enableHighAccuracy: true, timeout: 5000, maximumAge: 10000 }
+        );
+      };
+
+      fetchLocationWithTimeoutAndFallback(
+
+        async (position) => {
+          clearTimeout(locationTimeout);
+          await processLocation(position.coords.latitude, position.coords.longitude, position.coords.accuracy);
+        },
+        (error) => {
+          clearTimeout(locationTimeout);
+          console.error("Location error:", error);
+          if (liveLocation) {
+            console.warn("getCurrentPosition failed, using fallback liveLocation");
+            processLocation(liveLocation.lat, liveLocation.lng, 10);
+          } else {
+            alert("Location Permission Denied or Unavailable. Please ensure GPS is enabled.");
+            setSubmitting(false);
+            setLocationLoading(false);
+          }
+        },
+        { enableHighAccuracy: true, timeout: 5000, maximumAge: 10000 }
+      );
+    } catch (err) {
+      console.error(err);
+      alert("Failed to submit attendance.");
+      setSubmitting(false);
+    }
+  };
+
+  const submitOfficialDuty = async () => {
+    if (!odDutyType || !odReason) {
+      alert("Duty Type and Reason are required.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      let photoUrl = '';
+      if (odPhoto) {
+        try {
+          const storageRef = ref(storage, `od_photos/${staffData.uid}_${Date.now()}.jpg`);
+          console.log("Attempting to upload OD photo to Storage path:", storageRef.fullPath);
+          await uploadString(storageRef, odPhoto, 'data_url');
+          photoUrl = await getDownloadURL(storageRef);
+          console.log("OD Storage upload successful. URL:", photoUrl);
+        } catch (e: any) {
+          console.error("OD Storage upload failed. Error details:", e);
+          console.log("Falling back to save base64 to Firestore");
+          photoUrl = odPhoto;
+        }
+      }
+
+      
+      let lat = null;
+      let lng = null;
+      let address = 'Unknown';
+      let googleMapsLink = '';
+
+      if (liveLocation) {
+        lat = liveLocation.lat;
+        lng = liveLocation.lng;
+        address = liveLocation.address;
+        googleMapsLink = `https://www.google.com/maps?q=${lat},${lng}`;
+      }
