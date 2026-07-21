@@ -1,0 +1,1 @@
+const w=async(o,a=3,r=2e3)=>{let t=0;for(;t<a;)try{return await o()}catch(e){if(t++,console.warn(`Upload failed, attempt ${t} of ${a}`,e),t>=a)throw e;await new Promise(l=>setTimeout(l,r))}throw new Error("Upload failed")};export{w as u};

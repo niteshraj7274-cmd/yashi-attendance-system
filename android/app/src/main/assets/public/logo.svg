@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400">
+  <defs>
+    <linearGradient id="ysGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff4500" /> <!-- Red Orange -->
+      <stop offset="50%" stop-color="#ffa500" /> <!-- Orange -->
+      <stop offset="100%" stop-color="#ffd700" /> <!-- Yellow -->
+    </linearGradient>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e3a8a" /> <!-- Blue 900 -->
+      <stop offset="100%" stop-color="#3b82f6" /> <!-- Blue 500 -->
+    </linearGradient>
+  </defs>
+  
+  <rect width="400" height="400" rx="40" fill="url(#bgGradient)" />
+  
+  <!-- YS text -->
+  <text x="200" y="220" font-family="serif" font-size="180" font-weight="bold" font-style="italic" fill="url(#ysGradient)" text-anchor="middle">YS</text>
+  
+  <!-- YASHI SKILLS text -->
+  <text x="200" y="320" font-family="sans-serif" font-size="40" font-weight="bold" fill="#4ade80" text-anchor="middle" letter-spacing="4">YASHI</text>
+  <text x="200" y="360" font-family="sans-serif" font-size="30" font-weight="bold" fill="#38bdf8" text-anchor="middle" letter-spacing="6">SKILLS</text>
+  
+  <!-- Decorative elements -->
+  <circle cx="90" cy="110" r="15" fill="#f87171" />
+  <circle cx="310" cy="110" r="15" fill="#4ade80" />
+</svg>
