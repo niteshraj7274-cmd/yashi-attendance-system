@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Save, Upload, UserCircle, Lock } from 'lucide-react';
+import { logAuditActivity } from '../utils/auditHelpers';
 import { motion } from 'motion/react';
 import { db } from '../firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
@@ -17,7 +18,7 @@ export default function AdminProfileScreen() {
     designation: 'MIS Manager',
     profilePhoto: '',
     digitalSignature: '',
-    pin: '1234'
+    pin: '1999'
   });
 
   useEffect(() => {
@@ -51,6 +52,9 @@ export default function AdminProfileScreen() {
     setSaving(true);
     try {
       await setDoc(doc(db, 'settings', 'adminProfile'), profile, { merge: true });
+      logAuditActivity('Admin', 'Profile', 'Admin', 'Update', 'Updated Admin Profile/PIN', {
+        role: 'Admin', userName: 'Admin', action: 'Update', moduleName: 'Profile', newValue: 'Admin Profile'
+      });
       alert('Profile updated successfully!');
       navigate(-1);
     } catch (err) {
@@ -156,7 +160,7 @@ export default function AdminProfileScreen() {
               value={profile.pin}
               onChange={(e) => setProfile({...profile, pin: e.target.value.replace(/\D/g, '').slice(0, 4)})}
               className="w-full px-4 py-3 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all text-sm font-medium tracking-[0.5em]"
-              placeholder="1234"
+              placeholder="1999"
               maxLength={4}
             />
             <span className="text-[10px] text-emerald-600 mt-1 font-medium">Use this 4-digit PIN for Admin Login and Professional Dashboard</span>

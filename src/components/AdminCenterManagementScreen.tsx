@@ -104,12 +104,7 @@ export default function AdminCenterManagementScreen() {
         updatedAt: serverTimestamp()
       };
 
-      if (editingId) {
-        const oldCenter = centers.find(c => c.id === editingId);
-        await updateDoc(doc(db, 'centers', editingId), dataToSave);
-        
-        // Log changes
-        const adminStr = localStorage.getItem('userSession');
+              const adminStr = localStorage.getItem('userSession');
         let adminName = 'Admin';
         if (adminStr) {
           try {
@@ -117,6 +112,12 @@ export default function AdminCenterManagementScreen() {
             adminName = adminData.name || 'Admin';
           } catch(e) {}
         }
+      if (editingId) {
+        const oldCenter = centers.find(c => c.id === editingId);
+        await updateDoc(doc(db, 'centers', editingId), dataToSave);
+        
+        // Log changes
+
         
         let diffs = [];
         if (oldCenter?.name !== dataToSave.name) diffs.push(`Name: ${oldCenter?.name || ''} -> ${dataToSave.name}`);
@@ -125,7 +126,15 @@ export default function AdminCenterManagementScreen() {
         if (oldCenter?.latitude !== dataToSave.latitude || oldCenter?.longitude !== dataToSave.longitude) diffs.push(`GPS updated`);
         
         if (diffs.length > 0) {
-          logAuditActivity(adminName, 'Center', dataToSave.name, 'Updated Center', diffs.join(', '));
+          logAuditActivity(adminName, 'Center', dataToSave.name, 'Update', diffs.join(', '), {
+            role: 'Admin',
+            userName: adminName,
+            moduleName: 'Center Management',
+            action: 'Update',
+            centerCode: dataToSave.code,
+            centerName: dataToSave.name,
+            newValue: diffs.join(', ')
+          });
         }
 
         setShowForm(false);
@@ -135,6 +144,15 @@ export default function AdminCenterManagementScreen() {
         const newDoc = await addDoc(collection(db, 'centers'), {
           ...dataToSave,
           createdAt: serverTimestamp()
+        });
+        logAuditActivity(adminName, 'Center', dataToSave.name, 'Create', `Created center ${dataToSave.name}`, {
+          role: 'Admin',
+          userName: adminName,
+          moduleName: 'Center Management',
+          action: 'Create',
+          centerCode: dataToSave.code,
+          centerName: dataToSave.name,
+          newValue: JSON.stringify(dataToSave)
         });
         
         setShowForm(false);
@@ -221,7 +239,13 @@ export default function AdminCenterManagementScreen() {
           adminName = adminData.name || 'Admin';
         } catch(e) {}
       }
-      logAuditActivity(adminName, 'Center', centerName, 'Deleted Center', `Deleted center ${centerName}`);
+      logAuditActivity(adminName, 'Center', centerName, 'Delete', `Deleted center ${centerName}`, {
+        role: 'Admin',
+        userName: adminName,
+        moduleName: 'Center Management',
+        action: 'Delete',
+        centerName: centerName
+      });
       
       
     } catch (err) {

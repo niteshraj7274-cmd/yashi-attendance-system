@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { FileBarChart, ArrowLeft, MapPin, Users, UserCircle, Lock, X , Headset, Calendar, RefreshCw, Bell, LogOut, CheckCircle2, Trash2, BookOpen } from 'lucide-react';
 import { useSync } from './SyncContext';
 import { motion, AnimatePresence } from 'motion/react';
-import { collection, query, getDocs, doc, getDoc, where, onSnapshot, writeBatch, deleteDoc, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, getDocs, doc, getDoc, where, onSnapshot, writeBatch, deleteDoc, updateDoc, setDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Staff } from '../types';
 import { getOrCreateDeviceId } from '../utils/deviceUtils';
@@ -61,6 +61,7 @@ export default function CentreStaffSelectionScreen() {
 
     let unSubCenter: () => void;
     let unSubStaff: () => void;
+    let unSubNotif: () => void;
     let unSubSettings: () => void;
     let unSubAtt: () => void;
 
@@ -124,7 +125,7 @@ export default function CentreStaffSelectionScreen() {
           collection(db, 'center_notifications'),
           where('centerId', '==', centerId)
         );
-        onSnapshot(notifQ, (snap) => {
+        unSubNotif = onSnapshot(notifQ, (snap) => {
           const list: any[] = [];
           const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
           snap.forEach(d => {
@@ -150,6 +151,7 @@ export default function CentreStaffSelectionScreen() {
     return () => {
       if (unSubCenter) unSubCenter();
       if (unSubStaff) unSubStaff();
+      if (unSubNotif) unSubNotif();
       if (unSubSettings) unSubSettings();
       if (unSubAtt) unSubAtt();
     };
@@ -173,14 +175,7 @@ export default function CentreStaffSelectionScreen() {
 
     try {
       const validPin = selectedStaff.pin || '1234';
-      if (pin !== validPin) {
-        setPinError('Invalid Staff PIN.');
-        setPinLoading(false);
-        return;
-      }
-
-
-      // Check device binding in registered_devices
+      
       let currentDeviceId = getOrCreateDeviceId();
       const userAgent = navigator.userAgent;
       let browserName = "Unknown Browser";
@@ -196,135 +191,135 @@ export default function CentreStaffSelectionScreen() {
       else if (userAgent.indexOf("iPhone") > -1) osName = "iOS";
       else if (userAgent.indexOf("iPad") > -1) osName = "iPadOS";
 
-      // Check if this staff member already has ANY device record (to enforce One Staff = One Record)
-      const existingDeviceQ = query(
-        collection(db, 'registered_devices'), 
-        where('staffUid', '==', selectedStaff.id)
-      );
-      const existingDeviceSnap = await getDocs(existingDeviceQ);
+      // Check if current device ID is already registered to someone else (Duplicate Detection)
+      const currentDeviceRef = doc(db, 'registered_devices', currentDeviceId);
+      const currentDeviceSnap = await getDoc(currentDeviceRef);
       
-      let existingDevice = null;
-      if (!existingDeviceSnap.empty) {
-         const devices = existingDeviceSnap.docs.map(d => ({id: d.id, ...d.data()})) as any[];
-         devices.sort((a: any, b: any) => {
-            const dateA = a.registeredAt?.toMillis?.() || 0;
-            const dateB = b.registeredAt?.toMillis?.() || 0;
-            return dateA - dateB;
-         });
-         existingDevice = devices.find(d => d.status === 'Approved' || d.status === 'Active') || devices[0];
+      if (currentDeviceSnap.exists()) {
+         const dData = currentDeviceSnap.data();
+         if (dData.staffUid && dData.staffUid !== selectedStaff.id) {
+            // Duplicate detected! One device used by multiple staff.
+            await updateDoc(currentDeviceRef, { status: 'Duplicate Detected' });
+            
+            // Log security alert
+            await addDoc(collection(db, 'device_audit_logs'), {
+               deviceId: currentDeviceId, staffName: selectedStaff.name, action: 'Duplicate Device Access Attempt', 
+               reason: `Device already registered to ${dData.staffName}`, timestamp: serverTimestamp()
+            });
+            
+            setPinError('Unauthorized Device. This device is associated with another account. Please contact HR/Admin.');
+            setPinLoading(false);
+            return;
+         }
       }
 
-      if (existingDevice) {
-         // Reuse existing device ID to prevent duplicates
-         localStorage.setItem('deviceId', existingDevice.id);
-         currentDeviceId = existingDevice.id;
+      // Fetch existing device for this specific staff member
+      const existingDeviceQ = query(collection(db, 'registered_devices'), where('staffUid', '==', selectedStaff.id));
+      const existingDeviceSnap = await getDocs(existingDeviceQ);
+      
+      let staffExistingDevice = null;
+      if (!existingDeviceSnap.empty) {
+         const devices = existingDeviceSnap.docs.map(d => ({id: d.id, ...d.data()})) as any[];
+         staffExistingDevice = devices.find(d => d.status === 'Approved' || d.status === 'Active') || 
+                               devices.find(d => d.status === 'Pending Approval' || d.status === 'Pending' || d.status === 'Device Change Requested') || 
+                               devices.find(d => d.status === 'Blocked' || d.status === 'Suspended') ||
+                               devices[0];
+      }
+
+      if (pin !== validPin) {
+        // Failed Login Protection
+        if (staffExistingDevice && staffExistingDevice.id === currentDeviceId) {
+           const attempts = (staffExistingDevice.failedAttempts || 0) + 1;
+           if (attempts >= 5) {
+              await updateDoc(doc(db, 'registered_devices', currentDeviceId), { failedAttempts: attempts, status: 'Blocked', blockedReason: 'Too many failed PIN attempts' });
+              setPinError('Device has been blocked due to multiple failed login attempts. Please contact HR/Admin.');
+           } else {
+              await updateDoc(doc(db, 'registered_devices', currentDeviceId), { failedAttempts: attempts });
+              setPinError(`Invalid PIN. Attempt ${attempts} of 5 before device lock.`);
+           }
+        } else {
+           setPinError('Invalid Staff PIN.');
+        }
+        setPinLoading(false);
+        return;
+      }
+
+      if (staffExistingDevice) {
+         // Staff HAS a registered device. Must match current.
+         if (staffExistingDevice.id !== currentDeviceId) {
+             setPinError('Unauthorized Device. You can only login from your approved device. Please contact HR/Admin.');
+             // Optionally create a Change Request automatically here, but prompt asks to just show unauthorized.
+             
+             // Wait, the prompt says "If staff changes mobile: Generate Device Change Request."
+             // Let's create a change request if it doesn't already exist.
+             if (staffExistingDevice.status !== 'Device Change Requested') {
+                 // But wait, what if they just login on their friend's phone? Generating change request immediately might be bad.
+                 // The prompt says "Generate Device Change Request". Let's do it on the NEW device ID.
+                 await setDoc(doc(db, 'registered_devices', currentDeviceId), {
+                    staffUid: selectedStaff.id,
+                    staffName: selectedStaff.name || '',
+                    staffId: selectedStaff.staffId || '',
+                    centerId: centerId,
+                    centerName: centerName,
+                    status: 'Device Change Requested',
+                    registeredAt: serverTimestamp(),
+                    deviceName: `${osName} - ${browserName}`,
+                    role: 'Staff',
+                    changeRequestReason: 'Login from new device detected'
+                 }, { merge: true });
+             }
+             
+             setPinLoading(false);
+             return;
+         }
          
-         if (existingDevice.status === 'Pending') {
+         // It matches. Check status.
+         if (staffExistingDevice.status === 'Pending Approval' || staffExistingDevice.status === 'Pending' || staffExistingDevice.status === 'Device Change Requested') {
            setPinError('Device registration is pending admin approval.');
            setPinLoading(false);
            return;
          }
-         if (existingDevice.status === 'Blocked' || existingDevice.status === 'Rejected') {
+         if (staffExistingDevice.status === 'Blocked' || staffExistingDevice.status === 'Rejected' || staffExistingDevice.status === 'Suspended' || staffExistingDevice.status === 'Deleted' || staffExistingDevice.status === 'Replaced' || staffExistingDevice.status === 'Duplicate Detected') {
            setPinError('Your device has been blocked or rejected. Please contact the Administrator.');
            setPinLoading(false);
            return;
          }
+         if (staffExistingDevice.sessionRevoked) {
+           await updateDoc(doc(db, 'registered_devices', currentDeviceId), { sessionRevoked: false, status: 'Pending Approval', blockedReason: 'Session was revoked' });
+           setPinError('Session was revoked. Device is pending re-approval.');
+           setPinLoading(false);
+           return;
+         }
          
-         await updateDoc(doc(db, 'registered_devices', existingDevice.id), {
+         // Success
+         await updateDoc(doc(db, 'registered_devices', currentDeviceId), {
            lastLogin: new Date().toISOString(),
+           failedAttempts: 0,
            staffName: selectedStaff.name || '',
            staffId: selectedStaff.staffId || '',
            deviceName: `${osName} - ${browserName}`
          });
+      } else {
+         // Staff has NO registered device. Register this one as pending.
+         await setDoc(doc(db, 'registered_devices', currentDeviceId), {
+            staffUid: selectedStaff.id,
+            staffName: selectedStaff.name || '',
+            staffId: selectedStaff.staffId || '',
+            centerId: centerId,
+            centerName: centerName,
+            status: 'Pending Approval',
+            registeredAt: serverTimestamp(),
+            deviceName: `${osName} - ${browserName}`,
+            role: 'Staff'
+         }, { merge: true });
          
-         // Navigate to staff dashboard
-         localStorage.setItem('userSession', JSON.stringify({
-           uid: selectedStaff.id,
-           role: 'staff',
-           centerId: centerId,
-           staffId: selectedStaff.staffId || '',
-           name: selectedStaff.name || ''
-         }));
-         navigate('/staff-dashboard');
+         setPinError('New device registered successfully. Pending Admin Approval. Please contact HR/Admin.');
+         setPinLoading(false);
          return;
       }
-      
-      // If we reach here, no existing device was found for this staff.
-      // Use the current deviceId from localStorage
-      const deviceRef = doc(db, 'registered_devices', currentDeviceId);
-      const deviceSnap = await getDoc(deviceRef);
 
-      if (deviceSnap.exists()) {
-        const deviceData = deviceSnap.data();
-        if (deviceData.staffUid && deviceData.staffUid !== selectedStaff.id) {
-          setPinError('This device is already registered to another staff member.');
-          setPinLoading(false);
-          return;
-        }
-        if (deviceData.status === 'Pending') {
-          setPinError('Device registration is pending admin approval.');
-          setPinLoading(false);
-          return;
-        }
-        if (deviceData.status === 'Blocked' || deviceData.status === 'Rejected') {
-          setPinError('Your device has been blocked or rejected. Please contact the Administrator.');
-          setPinLoading(false);
-          return;
-        }
-        
-        const updates: any = {
-          lastLogin: new Date().toISOString()
-        };
-        
-        if (!deviceData.staffUid) {
-           updates.staffUid = selectedStaff.id;
-           updates.staffId = selectedStaff.staffId || '';
-           updates.staffName = selectedStaff.name || '';
-           updates.role = 'Staff';
-           updates.deviceName = `${osName} - ${browserName}`;
-        }
-        
-        // Update last login and possibly bind staff
-        await updateDoc(deviceRef, updates);
-      } else {
-        // Create new device registration ONLY if it doesn't exist
-        const settingsSnap = await getDoc(doc(db, 'settings', 'appSettings'));
-        const autoReg = settingsSnap.exists() ? settingsSnap.data().autoDeviceRegistration ?? false : false;
-        const newStatus = autoReg ? 'Approved' : 'Pending';
-        
-        await setDoc(deviceRef, {
-          deviceId: currentDeviceId,
-          centerId: centerId,
-          centerName: centerName,
-          centerCode: centerCode,
-          staffUid: selectedStaff.id,
-          staffId: selectedStaff.staffId || '',
-          staffName: selectedStaff.name || '',
-          role: 'Staff',
-          deviceName: `${osName} - ${browserName}`,
-          status: newStatus,
-          registeredAt: new Date(),
-          lastLogin: new Date().toISOString()
-        });
-        
-        logAuditActivity(
-          selectedStaff.name || 'Staff',
-          'Device',
-          currentDeviceId,
-          'Device Registered',
-          `Device registered for ${selectedStaff.name} with status ${newStatus}`
-        ).catch(console.error);
-
-        if (newStatus === 'Pending') {
-          setPinError('Device registration submitted. Waiting for Admin approval.');
-          setPinLoading(false);
-          return;
-        }
-      }
-
-
-
-      // Store session
+      // Navigate to staff dashboard
+      sessionStorage.setItem('loginTime', new Date().toISOString());
       localStorage.setItem('userSession', JSON.stringify({
         uid: selectedStaff.id,
         role: 'staff',
@@ -332,13 +327,19 @@ export default function CentreStaffSelectionScreen() {
         staffId: selectedStaff.staffId || '',
         name: selectedStaff.name || ''
       }));
-
-      // Navigate to staff dashboard
+      logAuditActivity(selectedStaff.name || 'Staff', 'Authentication', selectedStaff.name || 'Staff', 'Login', 'Staff logged in via Center Portal', {
+        role: 'Staff',
+        userName: selectedStaff.name || 'Staff',
+        staffId: selectedStaff.staffId || '',
+        centerName: centerName || '',
+        centerCode: centerCode || '',
+        moduleName: 'Authentication',
+        action: 'Login'
+      });
       navigate('/staff-dashboard');
-
-    } catch (err) {
+    } catch (err: any) {
       console.error("Login error", err);
-      setPinError('An error occurred during login. Please try again.');
+      setPinError('An error occurred during authentication.');
     } finally {
       setPinLoading(false);
     }
@@ -355,7 +356,18 @@ export default function CentreStaffSelectionScreen() {
             <h1 className="text-xl font-bold tracking-tight uppercase leading-tight line-clamp-1">{centerName || 'Centre Staff'}</h1>
             <p className="text-[10px] text-blue-200 uppercase tracking-widest mt-0.5">{centerCode || 'Select Staff'}</p>
           </div>
-          <button onClick={() => { localStorage.removeItem('centreSession'); navigate('/centre-login'); }} className="p-2 -mr-2 rounded-full hover:bg-white/10 transition-colors shrink-0 text-red-300 hover:text-red-100">
+          <button onClick={() => { 
+  logAuditActivity(centerName || 'Center', 'Authentication', centerName || 'Center', 'Logout', 'Center logged out', {
+    role: 'Center',
+    userName: centerName || 'Center',
+    centerName: centerName || '',
+    centerCode: centerCode || '',
+    moduleName: 'Authentication',
+    action: 'Logout'
+  });
+  localStorage.removeItem('centreSession'); 
+  navigate('/centre-login'); 
+}} className="p-2 -mr-2 rounded-full hover:bg-white/10 transition-colors shrink-0 text-red-300 hover:text-red-100">
             <LogOut size={20} />
           </button>
         </div>

@@ -1,3 +1,4 @@
+import { logAuditActivity } from '../utils/auditHelpers';
 import React, { useEffect, useState, useRef } from 'react';
 import {  useNavigate } from 'react-router-dom';
 import {  ArrowLeft, LogOut, Calendar, User, Clock, MapPin, CheckCircle2, Camera, X, Headset, AlertTriangle, RefreshCw , FileText} from 'lucide-react';
@@ -387,6 +388,15 @@ export default function StaffDashboardScreen() {
   };
 
   const handleLogout = () => {
+    logAuditActivity(staffData?.name || 'Staff', 'Authentication', staffData?.name || 'Staff', 'Logout', 'Staff logged out', {
+      role: 'Staff',
+      userName: staffData?.name || 'Staff',
+      staffId: staffData?.staffId || '',
+      centerName: centerInfo?.name || '',
+      centerCode: centerInfo?.code || '',
+      moduleName: 'Authentication',
+      action: 'Logout'
+    });
     localStorage.removeItem('userSession');
     navigate('/home');
   };
@@ -483,6 +493,13 @@ export default function StaffDashboardScreen() {
               'Accuracy': accuracy,
               'Current Address': address,
               'Device Information': deviceId || '',
+              'Device ID': deviceId || '',
+              'Geofence Result': isOutside ? 'Outside' : 'Inside',
+              'Login Time': new Date(sessionStorage.getItem('loginTime') || Date.now()).toISOString(),
+              'Attendance Time': new Date().toISOString(),
+              'Network Status': navigator.onLine ? 'Online' : 'Offline',
+              'Device Status': 'Approved', // Has to be approved to reach here
+
               'Attendance Status': attendanceStatus,
               'Attendance Type': 'Selfie Attendance',
               'syncStatus': 'Offline Saved'
@@ -558,6 +575,11 @@ export default function StaffDashboardScreen() {
               
               const docRef = doc(db, 'attendance', targetDocId);
               await updateDoc(docRef, outRecord);
+logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Marked OUT at ${timeStr}`, {
+  role: 'Staff', userName: staffData?.name, staffId: staffData?.staffId,
+  centerName: centerInfo?.name, centerCode: centerInfo?.code,
+  latitude, longitude, action: 'Mark OUT', moduleName: 'Attendance', newValue: 'Selfie Attendance'
+});
 
               setAttendanceRecord({ ...attendanceRecord, ...outRecord, attendanceDocId: targetDocId });
               
@@ -830,6 +852,11 @@ export default function StaffDashboardScreen() {
             };
             
             const docRef = await addDoc(collection(db, 'attendance'), newRecord);
+logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark IN', `Marked IN at ${timeStr}`, {
+  role: 'Staff', userName: staffData?.name, staffId: staffData?.staffId,
+  centerName: centerInfo?.name, centerCode: centerInfo?.code,
+  latitude, longitude, action: 'Mark IN', moduleName: 'Attendance', newValue: 'Location Only'
+});
             
             // Notification logic
             if (!isOutside) {
@@ -878,6 +905,11 @@ export default function StaffDashboardScreen() {
                 updateData['Attendance Status'] = 'Outside Geofence';
               }
               await updateDoc(doc(db, 'attendance', attendanceRecord.id), updateData);
+logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Marked OUT at ${timeStr}`, {
+  role: 'Staff', userName: staffData?.name, staffId: staffData?.staffId,
+  centerName: centerInfo?.name, centerCode: centerInfo?.code,
+  latitude, longitude, action: 'Mark OUT', moduleName: 'Attendance', newValue: 'Location Only'
+});
               
               if (!isOutside) {
                 sendCenterNotification(
@@ -1057,6 +1089,11 @@ export default function StaffDashboardScreen() {
       };
       
       await addDoc(collection(db, 'official_duty_requests'), newRecord);
+      logAuditActivity(staffData?.name, 'Official Duty', staffData?.name, 'Request', `Requested Official Duty: ${odDutyType}`, {
+        role: 'Staff', userName: staffData?.name, staffId: staffData?.staffId,
+        centerName: centerInfo?.name, centerCode: centerInfo?.code,
+        action: 'Request', moduleName: 'Official Duty', newValue: odDutyType
+      });
       
       alert("Official Duty Request Submitted Successfully");
       setShowOfficialDuty(false);

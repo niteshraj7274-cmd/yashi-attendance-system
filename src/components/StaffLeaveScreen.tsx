@@ -5,6 +5,7 @@ import { collection, query, where, getDocs, addDoc, serverTimestamp, orderBy } f
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { compressImage, dataUrlToFile } from '../utils/imageCompression';
 import { uploadWithRetry } from '../utils/uploadHelpers';
+import { logAuditActivity } from '../utils/auditHelpers';
 import { db, storage } from '../firebase';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -233,6 +234,10 @@ export default function StaffLeaveScreen() {
       });
 
       // Notification
+      logAuditActivity(staffData?.name, 'Leave', staffData?.name, 'Request', `Requested ${leaveType} Leave`, {
+        role: 'Staff', userName: staffData?.name, staffId: staffData?.staffId,
+        action: 'Request', moduleName: 'Leave', newValue: leaveType
+      });
       await addDoc(collection(db, 'notifications'), {
         targetRole: 'center',
         centerId: staffData.centerId || '',

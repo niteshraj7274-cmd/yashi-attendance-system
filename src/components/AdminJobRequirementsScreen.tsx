@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Plus, Search, Link as LinkIcon, Share2, Eye, EyeOff, Edit, Trash2, RefreshCw, MapPin, Users } from 'lucide-react';
 import { collection, query, orderBy, getDocs, updateDoc, doc, deleteDoc, setDoc, getDoc, serverTimestamp, addDoc } from 'firebase/firestore';
+import { logAuditActivity } from '../utils/auditHelpers';
 import { db } from '../firebase';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -91,8 +92,14 @@ export default function AdminJobRequirementsScreen() {
       
       if (editingId) {
         await updateDoc(doc(db, 'job_requirements', editingId), dataToSave);
+        logAuditActivity('Admin', 'Jobs', 'Admin', 'Update', `Updated Job Requirement: ${dataToSave.title}`, {
+          role: 'Admin', userName: 'Admin', action: 'Update', moduleName: 'Job Requirements', newValue: dataToSave.title
+        });
       } else {
         await addDoc(collection(db, 'job_requirements'), dataToSave);
+        logAuditActivity('Admin', 'Jobs', 'Admin', 'Create', `Created Job Requirement: ${dataToSave.title}`, {
+          role: 'Admin', userName: 'Admin', action: 'Create', moduleName: 'Job Requirements', newValue: dataToSave.title
+        });
       }
       
       setShowForm(false);

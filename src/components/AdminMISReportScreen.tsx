@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Download, FileSpreadsheet, Printer, Search, Users, Building2 } from 'lucide-react';
 import { collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
+import { logAuditActivity } from '../utils/auditHelpers';
 import { db } from '../firebase';
 import { useActiveCenters } from '../hooks/useActiveCenters';
 import ExcelJS from 'exceljs';
@@ -207,6 +208,9 @@ export default function AdminMISReportScreen() {
   }, [reportType, centers, staffList, attendanceData, leavesList, odList, holidays, datesArray, searchQuery]);
 
   const exportToExcel = async () => {
+    logAuditActivity('Admin', 'Reports', 'Admin', 'Export', 'Exported MIS Report to Excel', {
+      role: 'Admin', userName: 'Admin', action: 'Export', moduleName: 'MIS Report', newValue: 'Excel'
+    });
     if (reportData.length === 0) return;
     const workbook = new ExcelJS.Workbook();
     const sheetName = reportType === 'center' ? 'Center-wise MIS' : 'Staff-wise MIS';
@@ -294,6 +298,9 @@ export default function AdminMISReportScreen() {
   };
 
   const exportToPDF = () => {
+    logAuditActivity('Admin', 'Reports', 'Admin', 'Export', 'Exported MIS Report to PDF', {
+      role: 'Admin', userName: 'Admin', action: 'Export', moduleName: 'MIS Report', newValue: 'PDF'
+    });
     const [year, month] = selectedMonth.split('-');
     const doc = new jsPDF('landscape', 'mm', 'a3');
     

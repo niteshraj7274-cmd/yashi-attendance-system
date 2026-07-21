@@ -215,12 +215,7 @@ bankName: '',
         updatedAt: serverTimestamp()
       };
 
-      if (editingId) {
-        const oldStaff = staff.find(s => s.id === editingId);
-        await updateDoc(doc(db, 'staff', editingId), dataToSave);
-        
-        // Log changes
-        const adminStr = localStorage.getItem('userSession');
+              const adminStr = localStorage.getItem('userSession');
         let adminName = 'Admin';
         if (adminStr) {
           try {
@@ -228,6 +223,12 @@ bankName: '',
             adminName = adminData.name || 'Admin';
           } catch(e) {}
         }
+      if (editingId) {
+        const oldStaff = staff.find(s => s.id === editingId);
+        await updateDoc(doc(db, 'staff', editingId), dataToSave);
+        
+        // Log changes
+
         
         let diffs = [];
         if (oldStaff?.name !== dataToSave.name) diffs.push(`Name: ${oldStaff?.name || ''} -> ${dataToSave.name}`);
@@ -239,12 +240,27 @@ bankName: '',
         if (oldStaff?.pin !== dataToSave.pin) diffs.push(`PIN changed`);
         
         if (diffs.length > 0) {
-          logAuditActivity(adminName, 'Staff', dataToSave.name, 'Updated Staff', diffs.join(', '));
+          logAuditActivity(adminName, 'Staff', dataToSave.name, 'Update', diffs.join(', '), {
+            role: 'Admin',
+            userName: adminName,
+            moduleName: 'Staff Management',
+            action: 'Update',
+            staffId: dataToSave.staffId,
+            newValue: diffs.join(', ')
+          });
         }
       } else {
         await addDoc(collection(db, 'staff'), {
           ...dataToSave,
           createdAt: serverTimestamp()
+        });
+        logAuditActivity(adminName, 'Staff', dataToSave.name, 'Create', `Created new staff: ${dataToSave.name}`, {
+          role: 'Admin',
+          userName: adminName,
+          moduleName: 'Staff Management',
+          action: 'Create',
+          staffId: dataToSave.staffId,
+          newValue: JSON.stringify(dataToSave)
         });
       }
       
@@ -320,7 +336,12 @@ bankName: '',
           adminName = adminData.name || 'Admin';
         } catch(e) {}
       }
-      logAuditActivity(adminName, 'Staff', staffName, 'Deleted Staff', `Deleted staff ${staffName}`);
+      logAuditActivity(adminName, 'Staff', staffName, 'Delete', `Deleted staff ${staffName}`, {
+        role: 'Admin',
+        userName: adminName,
+        moduleName: 'Staff Management',
+        action: 'Delete'
+      });
       
       
     } catch (err) {

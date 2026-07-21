@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Settings, Save, Wrench } from 'lucide-react';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { logAuditActivity } from '../utils/auditHelpers';
 import { db } from '../firebase';
 import { motion } from 'motion/react';
+import AdminPinManagement from './AdminPinManagement';
 
 export default function AdminSettingsScreen() {
   const navigate = useNavigate();
@@ -23,6 +25,10 @@ export default function AdminSettingsScreen() {
   const [halfDayDeductionAmount, setHalfDayDeductionAmount] = useState('250');
   const [enableHalfDayDeduction, setEnableHalfDayDeduction] = useState(true);
   const [halfDayTime, setHalfDayTime] = useState('11:30');
+  const [monthlyPaidLeave, setMonthlyPaidLeave] = useState('2');
+  const [lateMarksForOneLeave, setLateMarksForOneLeave] = useState('4');
+  const [enableLateConversionRule, setEnableLateConversionRule] = useState(true);
+
   const [centerDashboardViewAllCenters, setCenterDashboardViewAllCenters] = useState(false);
   const [centerDashboardViewAttendanceDashboard, setCenterDashboardViewAttendanceDashboard] = useState(true);
   const [centerDashboardViewAttendanceSummary, setCenterDashboardViewAttendanceSummary] = useState(true);
@@ -71,6 +77,10 @@ export default function AdminSettingsScreen() {
           setHalfDayDeductionAmount(docSnap.data().halfDayDeductionAmount || '250');
           setEnableHalfDayDeduction(docSnap.data().enableHalfDayDeduction ?? true);
           setHalfDayTime(docSnap.data().halfDayTime || '11:30');
+          setMonthlyPaidLeave(docSnap.data().monthlyPaidLeave || '2');
+          setLateMarksForOneLeave(docSnap.data().lateMarksForOneLeave || '4');
+          setEnableLateConversionRule(docSnap.data().enableLateConversionRule ?? true);
+
           setCenterDashboardViewAllCenters(docSnap.data().centerDashboardViewAllCenters ?? false);
           setCenterDashboardViewAttendanceDashboard(docSnap.data().centerDashboardViewAttendanceDashboard ?? true);
           setCenterDashboardViewAttendanceSummary(docSnap.data().centerDashboardViewAttendanceSummary ?? true);
@@ -123,6 +133,9 @@ export default function AdminSettingsScreen() {
     }
     setSaving(true);
     try {
+      logAuditActivity('Admin', 'Settings', 'Admin', 'Update', 'Updated App Settings', {
+        role: 'Admin', userName: 'Admin', action: 'Update', moduleName: 'Settings', newValue: 'App Settings'
+      });
       await setDoc(doc(db, 'settings', 'appSettings'), {
         testMode: testMode,
         attendanceModuleEnabled: attendanceModuleEnabled,
@@ -268,6 +281,33 @@ export default function AdminSettingsScreen() {
             </select>
           </div>
 
+          
+          <div className="flex flex-col gap-4 p-4 bg-slate-50 border border-slate-200 rounded-lg">
+            <div>
+              <h3 className="font-bold text-slate-800 text-sm">Payroll Rules Settings</h3>
+              <p className="text-xs text-slate-500 mt-1">Configure leave conversion and PL rules.</p>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+               <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Monthly Paid Leave</label>
+                  <input type="number" min="0" value={monthlyPaidLeave} onChange={e => setMonthlyPaidLeave(e.target.value)} className="w-full px-3 py-2 bg-white border border-slate-200 rounded outline-none text-sm" />
+               </div>
+               <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Late Marks For 1 Leave</label>
+                  <input type="number" min="1" value={lateMarksForOneLeave} onChange={e => setLateMarksForOneLeave(e.target.value)} className="w-full px-3 py-2 bg-white border border-slate-200 rounded outline-none text-sm" />
+               </div>
+            </div>
+
+            <div className="flex items-center justify-between mt-2 border-t border-slate-200 pt-3">
+               <span className="text-sm font-bold text-slate-700">Enable Late Conversion Rule</span>
+               <label className="relative inline-flex items-center cursor-pointer">
+                 <input type="checkbox" className="sr-only peer" checked={enableLateConversionRule} onChange={(e) => setEnableLateConversionRule(e.target.checked)} />
+                 <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+               </label>
+            </div>
+          </div>
+
           <div className="flex items-center justify-between p-4 bg-slate-50 border border-slate-200 rounded-lg">
             <div>
               <h3 className="font-bold text-slate-800 text-sm">GPS Test Mode</h3>
@@ -335,6 +375,8 @@ export default function AdminSettingsScreen() {
 
           </button>
         </motion.div>
+
+        <AdminPinManagement />
 
         <motion.div 
           initial={{ opacity: 0, y: 10 }}

@@ -1,10 +1,11 @@
+import { logAuditActivity } from '../utils/auditHelpers';
 import {  useEffect, useState } from 'react';
 import {  useNavigate } from 'react-router-dom';
 import {  ShieldCheck, Download, FileSpreadsheet, ArrowLeft, LogOut, Users, Building2, CalendarCheck, FileBarChart, Settings, Headset, Sparkles, BrainCircuit, UserCircle, MapPin, Calendar, AlertTriangle, RefreshCw, Clock , FileText} from 'lucide-react';
 import {  useSync } from './SyncContext';
 import {  motion } from 'motion/react';
 import {  db } from '../firebase';
-import {  doc, getDoc, getDocs, collection, query, where, onSnapshot } from 'firebase/firestore';
+import {  doc, getDoc, getDocs, collection, query, where, onSnapshot, setDoc } from 'firebase/firestore';
 import {  MonitorPlay, Bell, BookOpen } from 'lucide-react';
 
 export default function AdminDashboardScreen() {
@@ -20,7 +21,7 @@ export default function AdminDashboardScreen() {
   const [showPinModal, setShowPinModal] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [pinError, setPinError] = useState('');
-  const [adminPin, setAdminPin] = useState('1234');
+  const [adminPin, setAdminPin] = useState('1999');
   const [appSettings, setAppSettings] = useState<any>({
     attendanceModuleEnabled: true,
     leaveModuleEnabled: true,
@@ -161,18 +162,83 @@ export default function AdminDashboardScreen() {
   }, [navigate]);
 
   
-  const handlePinSubmit = () => {
-    if (pinInput === adminPin || pinInput === '1999' || pinInput === '1234' || pinInput === '2024') {
-      setShowPinModal(false);
-      setPinInput('');
-      setPinError('');
-      navigate('/admin/professional-dashboard');
-    } else {
-      setPinError('Invalid PIN');
+  
+  const hashPin = async (pin: string) => {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(pin);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+
+  const handlePinSubmit = async () => {
+    setPinError('');
+    try {
+      const lockRef = doc(db, 'settings', 'profAdminLock');
+      const lockSnap = await getDoc(lockRef);
+      if (lockSnap.exists()) {
+         const lockData = lockSnap.data();
+         if (lockData.lockedUntil && lockData.lockedUntil > Date.now()) {
+            const mins = Math.ceil((lockData.lockedUntil - Date.now()) / 60000);
+            setPinError(`Locked for ${mins} minutes.`);
+            return;
+         }
+      }
+
+      const adminDoc = await getDoc(doc(db, 'settings', 'adminPins'));
+      let valid = false;
+      
+      if (adminDoc.exists()) {
+        const data = adminDoc.data();
+        if (data.profPinEnabled === false) {
+           valid = true;
+        } else {
+           const inputHash = await hashPin(pinInput);
+           if (data.profPinHash === inputHash) valid = true;
+           if ((pinInput === '1999' || pinInput === adminPin) && !data.profPinHash) valid = true;
+        }
+      } else {
+         if (pinInput === '1999' || pinInput === adminPin || pinInput === '1234' || pinInput === '2024') valid = true;
+      }
+
+      if (valid) {
+        if (lockSnap.exists()) await setDoc(lockRef, { attempts: 0, lockedUntil: null }, { merge: true });
+        setShowPinModal(false);
+        setPinInput('');
+        navigate('/admin/professional-dashboard');
+      } else {
+        let attempts = lockSnap.exists() ? (lockSnap.data().attempts || 0) + 1 : 1;
+        let lockedUntil = null;
+        if (attempts >= 5) {
+           lockedUntil = Date.now() + 15 * 60 * 1000;
+        }
+        await setDoc(lockRef, { attempts, lockedUntil }, { merge: true });
+        
+        
+        logAuditActivity(adminName, 'Security', adminName, 'Failed Login', 'Failed Professional Dashboard PIN', {
+           role: 'Admin', userName: adminName, action: 'Failed Login', moduleName: 'Professional Dashboard', newValue: `Attempt ${attempts}`
+        });
+
+        if (lockedUntil) {
+           setPinError('Locked for 15 minutes.');
+        } else {
+           setPinError('Invalid PIN');
+        }
+        setPinInput('');
+      }
+    } catch (err: any) {
+      setPinError('Failed to verify PIN');
     }
   };
 
+
   const handleLogout = async () => {
+    logAuditActivity('Admin', 'Authentication', 'Admin', 'Logout', 'Admin logged out', {
+      role: 'Admin',
+      userName: 'Admin',
+      moduleName: 'Authentication',
+      action: 'Logout'
+    });
     localStorage.removeItem('userSession');
     navigate('/home');
   };

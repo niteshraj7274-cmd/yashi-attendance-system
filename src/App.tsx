@@ -79,6 +79,14 @@ const WhatsAppButton = lazy(() => import('./components/WhatsAppButton'));
 const DeveloperSettingsScreen = lazy(() => import('./components/DeveloperSettingsScreen'));
 const DeveloperLoginScreen = lazy(() => import('./components/DeveloperLoginScreen'));
 
+const ReportAdminLoginScreen = lazy(() => import('./components/ReportAdminLoginScreen'));
+const ReportClientLoginScreen = lazy(() => import('./components/ReportClientLoginScreen'));
+const ReportAdminDashboardScreen = lazy(() => import('./components/ReportAdminDashboardScreen'));
+const ReportClientDashboardScreen = lazy(() => import('./components/ReportClientDashboardScreen'));
+import ReportAdminProtectedRoute from './components/ReportAdminProtectedRoute';
+import ReportClientProtectedRoute from './components/ReportClientProtectedRoute';
+
+
 const AdminLiveMonitorScreen = lazy(() => import('./components/AdminLiveMonitorScreen'));
 const AdminNotificationsScreen = lazy(() => import('./components/AdminNotificationsScreen'));
 import AutoOutDaemon from "./components/AutoOutDaemon";
@@ -104,9 +112,15 @@ export default function App() {
               <Route path="/" element={<SplashScreen />} />
               <Route path="/home" element={<HomeScreen />} />
               <Route path="/report-management" element={<ReportManagementScreen />} />
-              <Route path="/report-management/create" element={<ReportCreateScreen />} />
-              <Route path="/report-management/manage" element={<ReportManageScreen />} />
-                                          <Route path="/report-management/assignment" element={<ReportAssignmentScreen />} />
+
+              <Route path="/report-management/admin-login" element={<ReportAdminLoginScreen />} />
+              <Route path="/report-management/client-login" element={<ReportClientLoginScreen />} />
+              <Route path="/report-management/admin-dashboard" element={<ReportAdminProtectedRoute><ReportAdminDashboardScreen /></ReportAdminProtectedRoute>} />
+              <Route path="/report-management/client-dashboard" element={<ReportClientProtectedRoute><ReportClientDashboardScreen /></ReportClientProtectedRoute>} />
+
+              <Route path="/report-management/create" element={<ReportAdminProtectedRoute><ReportCreateScreen /></ReportAdminProtectedRoute>} />
+              <Route path="/report-management/manage" element={<ReportAdminProtectedRoute><ReportManageScreen /></ReportAdminProtectedRoute>} />
+                                          <Route path="/report-management/assignment" element={<ReportAdminProtectedRoute><ReportAssignmentScreen /></ReportAdminProtectedRoute>} />
               <Route path="/support" element={<SupportScreen />} />
               <Route path="/raise-ticket" element={<RaiseTicketScreen />} />
               <Route path="/centre-login" element={<CentreLoginScreen />} />

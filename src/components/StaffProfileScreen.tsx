@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, User, Lock, CheckCircle2, ShieldCheck } from 'lucide-react';
 import { doc, getDoc, updateDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
+import { logAuditActivity } from '../utils/auditHelpers';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function StaffProfileScreen() {

@@ -4,6 +4,7 @@ import { ArrowLeft, Download, FileSpreadsheet, Building2, Users, IndianRupee, Fi
 import AdminSalaryRulesModal from './AdminSalaryRulesModal';
 import { doc } from 'firebase/firestore';
 import { collection, onSnapshot, query } from 'firebase/firestore';
+import { logAuditActivity } from '../utils/auditHelpers';
 import { db } from '../firebase';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
@@ -41,6 +42,7 @@ export default function AdminSalaryDashboardScreen() {
   const [selectedCenter, setSelectedCenter] = useState('');
   const [selectedStaff, setSelectedStaff] = useState('');
 
+    const [appSettings, setAppSettings] = useState<any>({});
   const [staffList, setStaffList] = useState<any[]>([]);
   const [attendanceRecords, setAttendanceRecords] = useState<any[]>([]);
   const [holidays, setHolidays] = useState<any[]>([]);
@@ -72,9 +74,26 @@ export default function AdminSalaryDashboardScreen() {
       }
     });
 
+    
+    const unsubSettings = onSnapshot(doc(db, 'settings', 'appSettings'), (docSnap) => {
+      if (docSnap.exists()) {
+        setAppSettings(docSnap.data());
+      }
+    });
+
     const unsubOD = onSnapshot(collection(db, 'official_duty_requests'), (snap) => {
       setOdList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
+
+    return () => {
+      unsubStaff();
+      unsubAtt();
+      unsubHol();
+      unsubLeaves();
+      unsubRules();
+      unsubOD();
+      unsubSettings();
+    };
 
     // Simulate loading time to wait for initial snaps
     const timer = setTimeout(() => setLoading(false), 1500);
@@ -85,6 +104,7 @@ export default function AdminSalaryDashboardScreen() {
       unsubHol();
       unsubLeaves();
       unsubOD();
+      unsubSettings();
       clearTimeout(timer);
     };
   }, []);
@@ -161,21 +181,39 @@ export default function AdminSalaryDashboardScreen() {
       });
 
 
-      // Base payable days
-      let payableDays = present + (salaryRules.holidayWorkedCountAsPaid ? holidayWorked : 0) + (salaryRules.weeklyOffWorkedCountAsPaid ? woWorked : 0) + (salaryRules.odCountAsPresent ? od : 0) + (salaryRules.leaveDeductionType === 'paid' ? leave : 0) + holidayPaid + wo;
       const workingDays = daysInMonth - holidayPaid - holidayNonPayable - wo;
+      
+      // GET PAYROLL SETTINGS
+      const monthlyPaidLeaveLimit = parseInt(appSettings?.monthlyPaidLeave || '2');
+      const lateMarksForOneLeave = parseInt(appSettings?.lateMarksForOneLeave || '4');
+      const enableLateConversionRule = appSettings?.enableLateConversionRule ?? true;
+      
+      let leaveFromLateMarks = 0;
+      let lateMarksRemaining = late;
+
+      if (enableLateConversionRule && lateMarksForOneLeave > 0) {
+          leaveFromLateMarks = Math.floor(late / lateMarksForOneLeave);
+          lateMarksRemaining = late % lateMarksForOneLeave;
+      }
+      
+      let totalLeavesTaken = leave + leaveFromLateMarks;
+      let paidLeaveUsed = Math.min(totalLeavesTaken, monthlyPaidLeaveLimit);
+      let paidLeaveRemaining = monthlyPaidLeaveLimit - paidLeaveUsed;
+      let leaveWithoutPay = totalLeavesTaken - paidLeaveUsed;
+
+      // Base payable days
+      let payableDays = present + (salaryRules.holidayWorkedCountAsPaid ? holidayWorked : 0) + (salaryRules.weeklyOffWorkedCountAsPaid ? woWorked : 0) + (salaryRules.odCountAsPresent ? od : 0) + paidLeaveUsed + holidayPaid + wo;
 
       // Salary Calculation Rules
       let deductions = 0;
-      
       const daySalary = (staff.monthlyGrossSalary || 0) / daysInMonth;
 
-      // Late Deduction
-      if (staff.lateDeductionEnabled !== false) {
+      // Late Deduction (for remaining late marks that didn't convert to leave)
+      if (staff.lateDeductionEnabled !== false && (!enableLateConversionRule || lateMarksRemaining > 0)) {
         if (salaryRules.lateDeductionType === 'percentage') {
-           deductions += late * daySalary * (salaryRules.lateDeductionValue / 100);
+           deductions += lateMarksRemaining * daySalary * (salaryRules.lateDeductionValue / 100);
         } else {
-           deductions += late * salaryRules.lateDeductionValue;
+           deductions += lateMarksRemaining * salaryRules.lateDeductionValue;
         }
       }
       
@@ -186,10 +224,8 @@ export default function AdminSalaryDashboardScreen() {
          deductions += absent * salaryRules.absentDeductionValue;
       }
 
-      // Leave Deduction
-      if (salaryRules.leaveDeductionType === 'unpaid') {
-         deductions += leave * daySalary;
-      }
+      // Leave Deduction (LWP)
+      deductions += leaveWithoutPay * daySalary;
 
       // Overtime
       // Since OT hours are not tracked directly in this model, we'll keep it 0 for now unless there's a field
@@ -272,6 +308,9 @@ export default function AdminSalaryDashboardScreen() {
   }, [processedSalaries]);
 
   const exportExcel = async () => {
+    logAuditActivity('Admin', 'Reports', 'Admin', 'Export', 'Exported Salary Report to Excel', {
+      role: 'Admin', userName: 'Admin', action: 'Export', moduleName: 'Salary Report', newValue: 'Excel'
+    });
     try {
       setGenerating(true);
       const workbook = new ExcelJS.Workbook();
@@ -293,11 +332,16 @@ export default function AdminSalaryDashboardScreen() {
         { header: 'Holidays (Paid)', key: 'holidays', width: 15 },
         { header: 'Weekly Offs', key: 'wo', width: 15 },
         { header: 'Absent', key: 'absent', width: 12 },
-        { header: 'Late', key: 'late', width: 12 },
+        { header: 'Paid Leave Used', key: 'paidLeaveUsed', width: 15 },
+        { header: 'LWP', key: 'leaveWithoutPay', width: 12 },
+        { header: 'Late Marks', key: 'late', width: 12 },
+        { header: 'Late Converted', key: 'lateConvertedToLeave', width: 15 },
         { header: 'Basic Salary', key: 'basic', width: 15 },
         { header: 'HRA', key: 'hra', width: 15 },
         { header: 'Other Allow.', key: 'other', width: 15 },
-        { header: 'Gross Salary', key: 'gross', width: 15 },
+        { header: 'Gross Salary', key: 'monthlyGrossSalary', width: 15 },
+        { header: 'Salary Deduct', key: 'deductions', width: 15 },
+        { header: 'Final Gross', key: 'gross', width: 15 },
         { header: 'PF Deduct', key: 'pf', width: 15 },
         { header: 'ESI Deduct', key: 'esi', width: 15 },
         { header: 'Net Salary', key: 'net', width: 15 },
@@ -327,10 +371,15 @@ export default function AdminSalaryDashboardScreen() {
             holidays: staff.holidayPaid,
             wo: staff.woDays,
             absent: staff.absentDays,
+            paidLeaveUsed: staff.paidLeaveUsed,
+            leaveWithoutPay: staff.leaveWithoutPay,
             late: staff.lateDays,
+            lateConvertedToLeave: staff.lateConvertedToLeave,
             basic: staff.calculatedBasic,
             hra: staff.calculatedHra,
             other: staff.calculatedOther,
+            monthlyGrossSalary: staff.monthlyGrossSalary,
+            deductions: staff.deductions,
             gross: staff.calculatedGross,
             pf: staff.calculatedPf,
             esi: staff.calculatedEsi,
@@ -353,6 +402,9 @@ export default function AdminSalaryDashboardScreen() {
   };
 
   const exportPDF = () => {
+    logAuditActivity('Admin', 'Reports', 'Admin', 'Export', 'Exported Salary Report to PDF', {
+      role: 'Admin', userName: 'Admin', action: 'Export', moduleName: 'Salary Report', newValue: 'PDF'
+    });
     try {
       setGenerating(true);
       const doc = new jsPDF('landscape');
@@ -360,7 +412,7 @@ export default function AdminSalaryDashboardScreen() {
       doc.setFontSize(16);
       doc.text(`Monthly Salary Report - ${selectedMonth}`, 14, 15);
 
-      const tableColumn = ["Center", "Emp ID", "Name", "Cal. Days", "Pay Days", "P", "L", "OD", "H(W)", "WO(W)", "A", "Late", "Gross", "Net"];
+      const tableColumn = ["Center", "Emp ID", "Name", "Pay Days", "P", "PL Used", "LWP", "Late", "LateConv", "Gross", "Deduct", "Final Net"];
       const tableRows: any[] = [];
       
       processedSalaries.forEach(staff => {
@@ -369,16 +421,14 @@ export default function AdminSalaryDashboardScreen() {
             staff.centerCode || '',
             staff.staffId || '',
             staff.name || '',
-            staff.calendarDays,
             staff.payableDays,
             staff.presentDays,
-            staff.leaveDays,
-            staff.odDays,
-            staff.holidayWorked,
-            staff.woWorked,
-            staff.absentDays,
+            staff.paidLeaveUsed,
+            staff.leaveWithoutPay,
             staff.lateDays,
-            staff.calculatedGross,
+            staff.lateConvertedToLeave,
+            staff.monthlyGrossSalary,
+            staff.deductions,
             staff.calculatedNet
           ]);
         }
@@ -643,9 +693,12 @@ export default function AdminSalaryDashboardScreen() {
                   <th className="px-4 py-3 text-center">Days</th>
                   <th className="px-4 py-3 text-center">P / L / OD</th>
                   <th className="px-4 py-3 text-center">Late / Abs</th>
+                  <th className="px-4 py-3 text-center">PL (Used/Rem)</th>
+                  <th className="px-4 py-3 text-center">LWP</th>
+                  <th className="px-4 py-3 text-center">Late Conv.</th>
                   <th className="px-4 py-3 text-right">Gross</th>
-                  <th className="px-4 py-3 text-right">Deductions</th>
-                  <th className="px-4 py-3 text-right text-indigo-700">Net Salary</th>
+                  <th className="px-4 py-3 text-right">Sal. Ded.</th>
+                  <th className="px-4 py-3 text-right text-indigo-700">Final Salary</th>
                   <th className="px-4 py-3 text-center">Action</th>
                 </tr>
               </thead>
@@ -676,14 +729,23 @@ export default function AdminSalaryDashboardScreen() {
                         <span className="text-rose-600 font-bold" title="Absent">{staff.absentDays}</span>
                       </div>
                     </td>
+                    <td className="px-4 py-3 text-center font-bold text-xs text-slate-700">
+                        <span className="text-blue-600">{staff.paidLeaveUsed || 0}</span> / <span className="text-emerald-600">{staff.paidLeaveRemaining || 0}</span>
+                    </td>
+                    <td className="px-4 py-3 text-center font-bold text-xs text-rose-600">
+                        {staff.leaveWithoutPay || 0}
+                    </td>
+                    <td className="px-4 py-3 text-center font-bold text-xs text-orange-600">
+                        {staff.lateConvertedToLeave || 0}
+                    </td>
                     <td className="px-4 py-3 text-right font-mono font-medium text-slate-700">
-                      ₹{staff.calculatedGross?.toLocaleString()}
+                      ₹{((staff.monthlyGrossSalary || 0)).toLocaleString()}
                     </td>
                     <td className="px-4 py-3 text-right font-mono font-medium text-rose-600">
-                      -₹{(staff.calculatedPf + staff.calculatedEsi)?.toLocaleString()}
+                      -₹{Math.round(staff.deductions || 0).toLocaleString()}
                     </td>
                     <td className="px-4 py-3 text-right font-mono font-bold text-indigo-700">
-                      ₹{staff.calculatedNet?.toLocaleString()}
+                      ₹{staff.calculatedGross?.toLocaleString()}
                     </td>
                     <td className="px-4 py-3 text-center">
                       <button

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, ShieldCheck, Lock, RefreshCw } from 'lucide-react';
 import { useSync } from './SyncContext';
+import { logAuditActivity } from '../utils/auditHelpers';
 import { motion } from 'motion/react';
 import { db } from '../firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
@@ -36,14 +37,14 @@ export default function AdminLoginScreen() {
     setError('');
 
     try {
-      let validPin = '1234';
+      let validPin = '1999';
       try {
         const adminDoc = await getDoc(doc(db, 'settings', 'adminProfile'));
         if (adminDoc.exists() && adminDoc.data().pin) {
           validPin = adminDoc.data().pin;
         } else {
           // Create default if not exists
-          await setDoc(doc(db, 'settings', 'adminProfile'), { pin: '1234' }, { merge: true });
+          await setDoc(doc(db, 'settings', 'adminProfile'), { pin: '1999' }, { merge: true });
         }
       } catch (firestoreErr: any) {
         console.warn('Firestore error, falling back to default PIN.', firestoreErr);
@@ -53,6 +54,12 @@ export default function AdminLoginScreen() {
         localStorage.setItem('userSession', JSON.stringify({
           role: 'admin'
         }));
+        logAuditActivity('Admin', 'Authentication', 'Admin', 'Login', 'Admin logged in', {
+          role: 'Admin',
+          userName: 'Admin',
+          moduleName: 'Authentication',
+          action: 'Login'
+        });
         navigate(location.state?.redirect || '/admin-dashboard');
       } else {
         setError('Invalid PIN.');

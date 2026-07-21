@@ -5,6 +5,7 @@ import { useSync } from './SyncContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, query, getDocs, doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
+import { logAuditActivity } from '../utils/auditHelpers';
 import { useDeviceRegistration } from '../hooks/useDeviceRegistration';
 import { ShieldAlert } from 'lucide-react';
 import { useActiveCenters } from '../hooks/useActiveCenters';
@@ -169,6 +170,14 @@ export default function CentreLoginScreen() {
           centerId: targetCenterId,
           centerName: centerData.name
         }));
+        logAuditActivity(centerData.name, 'Authentication', centerData.name, 'Login', 'Center logged in', {
+          role: 'Center',
+          userName: centerData.name,
+          centerName: centerData.name,
+          centerCode: centerData.code,
+          moduleName: 'Authentication',
+          action: 'Login'
+        });
         navigate(`/centre/${selectedCenter}/staff`);
       } else {
         setError('Invalid Centre PIN.');

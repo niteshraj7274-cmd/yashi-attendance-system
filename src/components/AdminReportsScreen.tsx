@@ -1,3 +1,4 @@
+import { logAuditActivity } from '../utils/auditHelpers';
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, FileBarChart, MapPin, Clock, Calendar, Download } from 'lucide-react';
@@ -105,7 +106,10 @@ export default function AdminReportsScreen() {
     }
   };
 
-  const exportPDF = () => { 
+  const exportPDF = () => {
+    logAuditActivity('Admin', 'Reports', 'Admin', 'Export', 'Exported Report to PDF', {
+      role: 'Admin', userName: 'Admin', action: 'Export', moduleName: 'Reports', newValue: 'PDF'
+    }); 
     // Basic printable view for PDF
     const printWindow = window.open('', '', 'height=600,width=800');
     if (!printWindow) {
@@ -155,7 +159,10 @@ export default function AdminReportsScreen() {
     }, 250);
   };
   
-  const exportExcel = () => { 
+  const exportExcel = () => {
+    logAuditActivity('Admin', 'Reports', 'Admin', 'Export', 'Exported Report to Excel', {
+      role: 'Admin', userName: 'Admin', action: 'Export', moduleName: 'Reports', newValue: 'Excel'
+    }); 
     const headers = ['Date', 'Staff ID', 'Staff Name', 'Center Code', 'Center Name', 'IN Time', 'OUT Time', 'OUT Type', 'Total Working Hours', 'Attendance Status', 'Location', 'Center Latitude', 'Center Longitude', 'Staff Latitude', 'Staff Longitude', 'Distance (m)', 'Geofence Radius (m)', 'GPS Accuracy (m)', 'Inside/Outside Geofence'];
     
     const filteredRecords = records.filter(r => !selectedCenter || r['Center Code'] === selectedCenter).filter(r => filterStatus === 'All' || r['Attendance Status'] === filterStatus);

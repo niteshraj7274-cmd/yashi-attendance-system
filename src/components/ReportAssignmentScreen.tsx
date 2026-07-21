@@ -90,7 +90,7 @@ export default function ReportAssignmentScreen() {
   return (
     <div className="flex flex-col min-h-screen bg-slate-50 text-slate-900 font-sans">
       <div className="bg-orange-700 text-white h-20 flex items-center px-6 shadow-md gap-4">
-        <button onClick={() => navigate('/report-management')} className="p-2 -ml-2 rounded-full hover:bg-white/10 transition-colors">
+        <button onClick={() => navigate('/report-management/admin-dashboard')} className="p-2 -ml-2 rounded-full hover:bg-white/10 transition-colors">
           <ArrowLeft size={24} />
         </button>
         <div className="flex-1">

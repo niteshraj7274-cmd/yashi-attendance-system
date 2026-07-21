@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ShieldCheck, Smartphone, UserX, LogIn, DatabaseBackup, AlertOctagon, Activity, FileText } from 'lucide-react';
 import { collection, query, getDocs, where } from 'firebase/firestore';
 import { db } from '../firebase';
+import AdminPinManagement from './AdminPinManagement';
 
 export default function AdminSecurityDashboardScreen() {
   const navigate = useNavigate();
@@ -168,6 +169,7 @@ export default function AdminSecurityDashboardScreen() {
                <button onClick={() => navigate('/admin/error-logs')} className="w-full mt-4 py-2 bg-rose-50 text-rose-700 text-xs font-bold uppercase rounded-lg hover:bg-rose-100 transition-colors">View Error Logs</button>
             </div>
          </div>
+         <AdminPinManagement />
       </div>
     </div>
   );

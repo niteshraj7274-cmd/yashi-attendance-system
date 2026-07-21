@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, XCircle, Clock, FileText, Download, Filter, Search, Calendar, MapPin, Eye } from 'lucide-react';
 import { collection, query, getDocs, updateDoc, doc, serverTimestamp, onSnapshot, addDoc, where } from 'firebase/firestore';
+import { logAuditActivity } from '../utils/auditHelpers';
 import { db } from '../firebase';
 import { validateRequestApproval } from '../utils/validationHelpers';
 import { motion, AnimatePresence } from 'motion/react';

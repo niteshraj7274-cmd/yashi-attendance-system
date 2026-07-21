@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, XCircle, Clock, MapPin, AlertCircle, FileText, Plus, UserCircle } from 'lucide-react';
 import { collection, query, where, getDocs, doc, serverTimestamp, addDoc, onSnapshot, getDoc } from 'firebase/firestore';
 import { validateRequestSubmission } from '../utils/validationHelpers';
+import { logAuditActivity } from '../utils/auditHelpers';
 import { db } from '../firebase';
 import { motion, AnimatePresence } from 'motion/react';
 

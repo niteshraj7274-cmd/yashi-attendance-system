@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from 'react';
+const fs = require('fs');
+
+const code = `import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Search, ShieldCheck, ShieldAlert, MonitorSmartphone, Trash2, Edit, CheckCircle, RefreshCw, XCircle, Ban, RotateCcw, Power, Eye, History, Filter } from 'lucide-react';
 import { collection, query, getDocs, updateDoc, doc, deleteDoc, orderBy, getDoc, serverTimestamp, addDoc, where } from 'firebase/firestore';
@@ -29,7 +31,7 @@ const maskDeviceId = (id: string) => {
   if (id.length <= 8) return id;
   const start = id.substring(0, 8);
   const end = id.substring(id.length - 4);
-  return `${start}****${end}`;
+  return \`\${start}****\${end}\`;
 };
 
 export default function AdminDeviceManagementScreen() {
@@ -95,8 +97,8 @@ export default function AdminDeviceManagementScreen() {
   const executeActionWithReason = async (deviceId: string, actionName: string, actionFn: () => Promise<void>) => {
     setConfirmDialog({
       isOpen: true,
-      title: `Confirm ${actionName}`,
-      message: `Are you sure you want to ${actionName.toLowerCase()} this device? Please provide a reason below.`,
+      title: \`Confirm \${actionName}\`,
+      message: \`Are you sure you want to \${actionName.toLowerCase()} this device? Please provide a reason below.\`,
       requireReason: true,
       onConfirm: async () => {
         if (!actionReason.trim()) {
@@ -113,8 +115,8 @@ export default function AdminDeviceManagementScreen() {
   const executeAction = async (deviceId: string, actionName: string, actionFn: () => Promise<void>) => {
     setConfirmDialog({
       isOpen: true,
-      title: `Confirm ${actionName}`,
-      message: `Are you sure you want to ${actionName.toLowerCase()} this device?`,
+      title: \`Confirm \${actionName}\`,
+      message: \`Are you sure you want to \${actionName.toLowerCase()} this device?\`,
       requireReason: false,
       onConfirm: async () => {
         setConfirmDialog({ ...confirmDialog, isOpen: false });
@@ -132,19 +134,11 @@ export default function AdminDeviceManagementScreen() {
       if (newStatus === 'Approved') {
         updateData.approvalDate = new Date().toISOString();
         updateData.approvedBy = adminName;
-        
-        // If this is an approval, ensure all OTHER devices for this staff are marked as Inactive/Replaced
-        if (device && device.staffUid) {
-           const otherDevices = devices.filter(d => d.staffUid === device.staffUid && d.id !== deviceId && (d.status === 'Approved' || d.status === 'Active' || d.status === 'Pending'));
-           for (const od of otherDevices) {
-               await updateDoc(doc(db, 'registered_devices', od.id), { status: 'Replaced', replacedReason: 'New device approved' });
-           }
-        }
       }
       
       await updateDoc(doc(db, 'registered_devices', deviceId), updateData);
       
-      logAuditActivity(adminName, 'Device Security', device?.staffName || 'Device', 'Status Update', `Updated status to ${newStatus}`, {
+      logAuditActivity(adminName, 'Device Security', device?.staffName || 'Device', 'Status Update', \`Updated status to \${newStatus}\`, {
         role: 'Admin',
         userName: adminName,
         action: 'Status Update',
@@ -154,7 +148,7 @@ export default function AdminDeviceManagementScreen() {
         reason: reason
       });
 
-      showToast(`Device ${newStatus}`);
+      showToast(\`Device \${newStatus}\`);
       fetchDevices();
     } catch (err) {
       console.error(err);
@@ -352,7 +346,7 @@ export default function AdminDeviceManagementScreen() {
               >
                 <div className="p-4 border-b border-slate-100 flex justify-between items-start bg-slate-50">
                   <div className="flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center shadow-inner ${device.status === 'Approved' || device.status === 'Active' ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-200 text-slate-500'}`}>
+                    <div className={\`w-10 h-10 rounded-lg flex items-center justify-center shadow-inner \${device.status === 'Approved' || device.status === 'Active' ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-200 text-slate-500'}\`}>
                       <MonitorSmartphone size={20} />
                     </div>
                     <div>
@@ -360,7 +354,7 @@ export default function AdminDeviceManagementScreen() {
                       <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{device.staffId || 'NO ID'}</p>
                     </div>
                   </div>
-                  <div className={`px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider ${getStatusColor(device.status || 'Pending')}`}>
+                  <div className={\`px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider \${getStatusColor(device.status || 'Pending')}\`}>
                     {device.status || 'Pending'}
                   </div>
                 </div>
@@ -501,7 +495,7 @@ export default function AdminDeviceManagementScreen() {
                </div>
                <div className="grid grid-cols-2 gap-4 border-b border-slate-100 pb-4">
                   <div><span className="block text-[10px] font-bold uppercase text-slate-400">Device Name/OS</span><span className="font-medium">{selectedDevice.deviceName || 'N/A'}</span></div>
-                  <div><span className="block text-[10px] font-bold uppercase text-slate-400">Status</span><span className={`font-bold ${getStatusColor(selectedDevice.status)}`}>{selectedDevice.status || 'Pending'}</span></div>
+                  <div><span className="block text-[10px] font-bold uppercase text-slate-400">Status</span><span className={\`font-bold \${getStatusColor(selectedDevice.status)}\`}>{selectedDevice.status || 'Pending'}</span></div>
                </div>
                <div className="grid grid-cols-2 gap-4 border-b border-slate-100 pb-4">
                   <div><span className="block text-[10px] font-bold uppercase text-slate-400">Registered</span><span className="font-medium">{selectedDevice.registeredAt?.toDate ? selectedDevice.registeredAt.toDate().toLocaleString() : 'N/A'}</span></div>
@@ -526,3 +520,6 @@ export default function AdminDeviceManagementScreen() {
     </div>
   );
 }
+`;
+
+fs.writeFileSync('src/components/AdminDeviceManagementScreen.tsx', code);
