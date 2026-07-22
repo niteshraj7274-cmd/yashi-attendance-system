@@ -85,16 +85,6 @@ export default function AdminSalaryDashboardScreen() {
       setOdList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
-    return () => {
-      unsubStaff();
-      unsubAtt();
-      unsubHol();
-      unsubLeaves();
-      unsubRules();
-      unsubOD();
-      unsubSettings();
-    };
-
     // Simulate loading time to wait for initial snaps
     const timer = setTimeout(() => setLoading(false), 1500);
 
@@ -103,6 +93,7 @@ export default function AdminSalaryDashboardScreen() {
       unsubAtt();
       unsubHol();
       unsubLeaves();
+      unsubRules();
       unsubOD();
       unsubSettings();
       clearTimeout(timer);
@@ -761,8 +752,8 @@ export default function AdminSalaryDashboardScreen() {
                 ))}
                 {processedSalaries.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-slate-500 font-medium">
-                      No staff records found for the selected criteria.
+                    <td colSpan={11} className="px-4 py-8 text-center text-slate-500 font-medium">
+                      No salary data available.
                     </td>
                   </tr>
                 )}

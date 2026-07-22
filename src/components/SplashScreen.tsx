@@ -24,13 +24,13 @@ export default function SplashScreen() {
         
         if (session) {
           if (session.role === 'admin') {
-            navigate('/admin-dashboard');
+            navigate('/admin-dashboard', { replace: true });
             return;
           } else if (session.role === 'staff') {
-            navigate('/staff-dashboard');
+            navigate('/staff-dashboard', { replace: true });
             return;
           } else if (session.role === 'developer') {
-            navigate('/developer-settings');
+            navigate('/developer-settings', { replace: true });
             return;
           }
         }
@@ -40,14 +40,15 @@ export default function SplashScreen() {
         try {
           const session = JSON.parse(centreSessionStr);
           if (session.centerId) {
-            navigate(`/centre/${session.centerId}/staff`);
+            navigate(`/centre/${session.centerId}/staff`, { replace: true });
             return;
           }
         } catch(e) {}
       }
       
-      navigate('/home');
+      navigate('/home', { replace: true });
     }, 1200);
+
     return () => clearTimeout(timer);
   }, [navigate]);
 
@@ -65,6 +66,7 @@ export default function SplashScreen() {
         <h1 className="text-2xl font-bold text-center tracking-tight mb-1.5 uppercase">YASHI SKILL PROJECT PVT. LTD.</h1>
         <p className="text-[10px] text-blue-200 uppercase tracking-widest text-center font-bold">Live Attendance System</p>
       </motion.div>
+
       <div className="absolute bottom-12 flex flex-col items-center">
         <div className="w-5 h-5 border-2 border-blue-400 border-t-white rounded-full animate-spin"></div>
       </div>

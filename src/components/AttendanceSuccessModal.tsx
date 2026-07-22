@@ -13,9 +13,10 @@ interface Props {
     staffName: string;
   };
   onOk: () => void;
+  buttonText?: string;
 }
 
-export default function AttendanceSuccessModal({ isOpen, title, message, details, onOk }: Props) {
+export default function AttendanceSuccessModal({ isOpen, title, message, details, onOk, buttonText = "✔ OK" }: Props) {
   return (
     <AnimatePresence>
       {isOpen && (
@@ -29,9 +30,9 @@ export default function AttendanceSuccessModal({ isOpen, title, message, details
             <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <CheckCircle2 size={32} className="text-emerald-600" />
             </div>
-            <h2 className="text-lg font-bold text-slate-800 mb-2">✅ Attendance Marked Successfully</h2>
-            <p className="text-sm font-medium text-emerald-600 mb-4">{title}</p>
-            {message && <p className="text-sm text-slate-600 mb-6">{message}</p>}
+            <h2 className="text-lg font-bold text-slate-800 mb-2 whitespace-pre-line">{title}</h2>
+            
+            {message && <p className="text-sm text-slate-600 mb-6 whitespace-pre-line">{message}</p>}
             
             {details && (
               <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 text-left mb-6 space-y-2">
@@ -58,7 +59,7 @@ export default function AttendanceSuccessModal({ isOpen, title, message, details
               onClick={onOk}
               className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold uppercase tracking-wider text-sm hover:bg-indigo-700 transition-colors"
             >
-              OK
+              {buttonText}
             </button>
           </motion.div>
         </div>

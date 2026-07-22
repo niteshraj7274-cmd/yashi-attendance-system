@@ -8,19 +8,19 @@ export default function ReportAdminProtectedRoute({ children }: { children: Reac
   useEffect(() => {
     const sessionStr = localStorage.getItem('reportAdminSession');
     if (!sessionStr) {
-      navigate('/report-management/admin-login');
+      navigate('/report-management');
       return;
     }
     
     try {
       const session = JSON.parse(sessionStr);
-      if (session.role === 'admin' && session.uid) {
+      if (session.role === 'admin') {
         setAuthorized(true);
       } else {
-        navigate('/report-management/admin-login');
+        navigate('/report-management');
       }
     } catch (e) {
-      navigate('/report-management/admin-login');
+      navigate('/report-management');
     }
   }, [navigate]);
 

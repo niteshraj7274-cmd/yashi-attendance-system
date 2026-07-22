@@ -130,7 +130,10 @@ export const syncOfflineRecords = async (onProgress?: (total: number, current: n
         }
       } else {
          // OUT record
-         targetDocId = `${record.data.staffUid}_${record.data.Date || record.data.date}`;
+         targetDocId = record.attendanceDocId;
+         if (!targetDocId || targetDocId.startsWith('local_')) {
+            targetDocId = `${record.data.staffUid}_${record.data.Date || record.data.date}`;
+         }
 
          
          if (targetDocId && !record.data.docCreated) {

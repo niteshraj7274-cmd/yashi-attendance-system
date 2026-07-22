@@ -3,6 +3,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { LogOut, Home, ArrowLeft } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
+import { App as CapacitorApp } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
 
 export default function SessionManager({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
@@ -10,6 +12,45 @@ export default function SessionManager({ children }: { children: React.ReactNode
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const warningTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [showWarning, setShowWarning] = useState(false);
+
+  useEffect(() => {
+    let backButtonListener: any = null;
+    
+    const initBackButton = async () => {
+      if (Capacitor.isNativePlatform()) {
+        try {
+          backButtonListener = await CapacitorApp.addListener('backButton', ({ canGoBack }) => {
+            const path = location.pathname;
+            const isRoot = path === '/' || 
+                          path === '/home' || 
+                          path === '/admin-dashboard' || 
+                          path === '/staff-dashboard' || 
+                          path === '/developer-settings' || 
+                          path === '/job-admin-dashboard' || 
+                          path.endsWith('/staff'); // centre staff list
+                          
+            if (isRoot) {
+              CapacitorApp.minimizeApp();
+            } else if (canGoBack) {
+              navigate(-1);
+            } else {
+              CapacitorApp.minimizeApp();
+            }
+          });
+        } catch (e) {
+          console.error('Error adding backButton listener:', e);
+        }
+      }
+    };
+    
+    initBackButton();
+    
+    return () => {
+      if (backButtonListener) {
+        backButtonListener.remove().catch(() => {});
+      }
+    };
+  }, [location.pathname, navigate]);
 
   const getSessionInfo = () => {
     try {
@@ -130,15 +171,27 @@ export default function SessionManager({ children }: { children: React.ReactNode
   const isLoginPage = location.pathname === '/' || location.pathname.includes('login');
   const showNav = !isLoginPage && role !== null;
   
+  const isRoot = location.pathname === '/' || 
+                location.pathname === '/home' || 
+                location.pathname === '/admin-dashboard' || 
+                location.pathname === '/staff-dashboard' || 
+                location.pathname === '/developer-settings' || 
+                location.pathname === '/job-admin-dashboard' || 
+                location.pathname.endsWith('/staff');
+
   return (
     <>
       {children}
       {showNav && (
         <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 flex items-center gap-6 bg-slate-900/90 backdrop-blur-md px-6 py-3 rounded-full shadow-2xl z-50 border border-slate-700">
-           <button onClick={() => navigate(-1)} className="text-slate-300 hover:text-white transition-colors" title="Back">
-              <ArrowLeft size={22} />
-           </button>
-           <div className="w-px h-6 bg-slate-700"></div>
+           {!isRoot && (
+             <>
+               <button onClick={() => navigate(-1)} className="text-slate-300 hover:text-white transition-colors" title="Back">
+                  <ArrowLeft size={22} />
+               </button>
+               <div className="w-px h-6 bg-slate-700"></div>
+             </>
+           )}
            <button onClick={() => {
               const { role } = getSessionInfo();
               if (role === 'admin') navigate('/admin-dashboard');

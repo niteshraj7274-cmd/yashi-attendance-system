@@ -6,6 +6,30 @@ import { db } from '../firebase';
 import { logAuditActivity } from '../utils/auditHelpers';
 import { motion, AnimatePresence } from 'motion/react';
 
+  const getDeviceLocation = (onSuccess: any, onError: any, options?: any) => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        onSuccess,
+        (err) => {
+          console.warn("HTML5 Geolocation failed, trying IP fallback...", err);
+          fetch('https://ipapi.co/json/')
+            .then(res => res.json())
+            .then(data => {
+              if (data.latitude && data.longitude) {
+                onSuccess({ coords: { latitude: data.latitude, longitude: data.longitude, accuracy: 1000 } });
+              } else {
+                onError(err);
+              }
+            })
+            .catch(() => onError(err));
+        },
+        options || { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      );
+    } else {
+      onError({ code: 1, message: "Geolocation not supported" });
+    }
+  };
+
 const GEOFENCE_OPTIONS = ['200', '300', '400', '500', '700'];
 
 export default function AdminCenterManagementScreen() {
@@ -58,7 +82,7 @@ export default function AdminCenterManagementScreen() {
     if (navigator.geolocation) {
       setLocationLoading(true);
       setError(null);
-      navigator.geolocation.getCurrentPosition(
+      getDeviceLocation(
         (position) => {
           setFormData(prev => ({
             ...prev,
@@ -69,14 +93,31 @@ export default function AdminCenterManagementScreen() {
           alert("Location detected successfully!");
         },
         (error) => {
-          console.error("Geolocation Error:", error);
-          let errorMsg = "Failed to get location. ";
-          if (error.code === error.PERMISSION_DENIED) errorMsg += "Permission denied by browser.";
-          else if (error.code === error.POSITION_UNAVAILABLE) errorMsg += "Position unavailable.";
-          else if (error.code === error.TIMEOUT) errorMsg += "Request timed out.";
-          setError(errorMsg);
-          setLocationLoading(false);
-          alert(errorMsg);
+          console.warn("Geolocation Error, trying IP fallback...", error);
+          fetch('https://ipapi.co/json/')
+            .then(res => res.json())
+            .then(data => {
+              if (data.latitude && data.longitude) {
+                setFormData(prev => ({
+                  ...prev,
+                  latitude: data.latitude.toString(),
+                  longitude: data.longitude.toString()
+                }));
+                setLocationLoading(false);
+                alert("Location detected via fallback successfully!");
+              } else {
+                throw new Error("Fallback failed");
+              }
+            })
+            .catch(() => {
+              let errorMsg = "Failed to get location. ";
+              if (error.code === error.PERMISSION_DENIED) errorMsg += "Permission denied by browser.";
+              else if (error.code === error.POSITION_UNAVAILABLE) errorMsg += "Position unavailable.";
+              else if (error.code === error.TIMEOUT) errorMsg += "Request timed out.";
+              setError(errorMsg);
+              setLocationLoading(false);
+              alert(errorMsg);
+            });
         },
         { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
       );

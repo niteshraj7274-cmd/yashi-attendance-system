@@ -38,10 +38,12 @@ export default function AdminSettingsScreen() {
   const [centerDashboardViewReports, setCenterDashboardViewReports] = useState(true);
   const [centerDashboardViewSearchFilter, setCenterDashboardViewSearchFilter] = useState(true);
   const [isProd, setIsProd] = useState(import.meta.env.PROD);
+  const [mandatoryFingerprint, setMandatoryFingerprint] = useState(false);
   const [supportWhatsApp, setSupportWhatsApp] = useState('+91 7070972806');
   const [supportPhone, setSupportPhone] = useState('+91 7070972806');
   const [supportHours, setSupportHours] = useState('Monday – Saturday\n09:00 AM – 06:00 PM');
   const [savingSupport, setSavingSupport] = useState(false);
+  const [savingSecurity, setSavingSecurity] = useState(false);
   const [titleTaps, setTitleTaps] = useState(0);
 
   
@@ -88,7 +90,18 @@ export default function AdminSettingsScreen() {
           setCenterDashboardViewCenterFilter(docSnap.data().centerDashboardViewCenterFilter ?? true);
           setCenterDashboardViewStaffAttendanceDetails(docSnap.data().centerDashboardViewStaffAttendanceDetails ?? true);
           setCenterDashboardViewReports(docSnap.data().centerDashboardViewReports ?? true);
+
           setCenterDashboardViewSearchFilter(docSnap.data().centerDashboardViewSearchFilter ?? true);
+        }
+        
+        const securityRef = doc(db, 'settings', 'security');
+        console.log("Reading security settings from Firestore...");
+        const securitySnap = await getDoc(securityRef);
+        if (securitySnap.exists()) {
+          console.log("Loaded security settings:", securitySnap.data());
+          setMandatoryFingerprint(securitySnap.data().mandatoryFingerprint || false);
+        } else {
+          console.log("Security settings document does not exist yet.");
         }
         
         const supportRef = doc(db, 'settings', 'support');
@@ -99,8 +112,9 @@ export default function AdminSettingsScreen() {
           if (data.supportNumber) setSupportPhone(data.supportNumber);
           if (data.workingHours) setSupportHours(data.workingHours);
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error("Error fetching settings:", err);
+        alert("Error fetching settings: " + (err.message || err));
       } finally {
         setLoading(false);
       }
@@ -109,6 +123,23 @@ export default function AdminSettingsScreen() {
   }, []);
 
   
+  const handleSaveSecurity = async () => {
+    setSavingSecurity(true);
+    console.log("Writing security settings to Firestore:", { mandatoryFingerprint });
+    try {
+      await setDoc(doc(db, 'settings', 'security'), {
+        mandatoryFingerprint
+      }, { merge: true });
+      console.log("Security Settings Saved Successfully.");
+      alert("Security Settings Saved Successfully.");
+    } catch (err) {
+      console.error("Error saving security settings:", err);
+      alert("Failed to save security settings: " + (err.message || err));
+    } finally {
+      setSavingSecurity(false);
+    }
+  };
+
   const handleSaveSupport = async () => {
     setSavingSupport(true);
     try {
@@ -158,7 +189,7 @@ export default function AdminSettingsScreen() {
         centerDashboardViewCenterFilter: centerDashboardViewCenterFilter,
         centerDashboardViewStaffAttendanceDetails: centerDashboardViewStaffAttendanceDetails,
         centerDashboardViewReports: centerDashboardViewReports,
-        centerDashboardViewSearchFilter: centerDashboardViewSearchFilter,
+        centerDashboardViewSearchFilter,
       }, { merge: true });
       alert("Settings saved successfully!");
     } catch (err) {
@@ -377,6 +408,49 @@ export default function AdminSettingsScreen() {
         </motion.div>
 
         <AdminPinManagement />
+
+
+        {/* Security Settings */}
+        <motion.div 
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col gap-4 mt-6"
+        >
+          <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
+            <Settings size={20} className="text-red-600" />
+            <h2 className="text-sm font-bold uppercase tracking-wide text-slate-800">Security Settings</h2>
+          </div>
+          
+          <div className="p-4 bg-slate-50 rounded-lg border border-slate-100">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-slate-800 text-sm">Mandatory Fingerprint Authentication</h3>
+                <p className="text-xs text-slate-500 mt-1">Require all staff to use Biometric/Fingerprint authentication before marking attendance IN and OUT. Staff cannot disable this.</p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  className="sr-only peer" 
+                  checked={mandatoryFingerprint === true}
+                  onChange={(e) => setMandatoryFingerprint(e.target.checked)} 
+                />
+                <div className="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+              </label>
+            </div>
+          </div>
+          <button 
+            onClick={handleSaveSecurity}
+            disabled={savingSecurity}
+            className="mt-2 w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-lg shadow-sm transition-all active:scale-[0.98] disabled:opacity-70 flex justify-center items-center text-sm gap-2 uppercase tracking-wider"
+          >
+            {savingSecurity ? (
+              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+            ) : (
+              <><Save size={18} /> Save Security Settings</>
+            )}
+          </button>
+        </motion.div>
 
         <motion.div 
           initial={{ opacity: 0, y: 10 }}

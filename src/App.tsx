@@ -10,6 +10,7 @@ import AdminDeviceManagementScreen from './components/AdminDeviceManagementScree
 
 import { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import AppUpdateManager from './components/AppUpdateManager';
 import MaintenanceWrapper from './components/MaintenanceWrapper';
 const SplashScreen = lazy(() => import('./components/SplashScreen'));
 const HomeScreen = lazy(() => import('./components/HomeScreen'));
@@ -22,6 +23,7 @@ const AdminLoginScreen = lazy(() => import('./components/AdminLoginScreen'));
 
 const AdminDashboardScreen = lazy(() => import('./components/AdminDashboardScreen'));
 const AdminProfessionalDashboardScreen = lazy(() => import('./components/AdminProfessionalDashboardScreen'));
+const AdminUpdateSettingsScreen = lazy(() => import('./components/AdminUpdateSettingsScreen'));
 const AdminCenterManagementScreen = lazy(() => import('./components/AdminCenterManagementScreen'));
 const AdminStaffManagementScreen = lazy(() => import('./components/AdminStaffManagementScreen'));
 const ReportManagementScreen = lazy(() => import('./components/ReportManagementScreen'));
@@ -82,6 +84,11 @@ const DeveloperLoginScreen = lazy(() => import('./components/DeveloperLoginScree
 const ReportAdminLoginScreen = lazy(() => import('./components/ReportAdminLoginScreen'));
 const ReportClientLoginScreen = lazy(() => import('./components/ReportClientLoginScreen'));
 const ReportAdminDashboardScreen = lazy(() => import('./components/ReportAdminDashboardScreen'));
+
+const AdminDmrSettingsScreen = lazy(() => import('./components/AdminDmrSettingsScreen'));
+const AdminDmrDashboardScreen = lazy(() => import('./components/AdminDmrDashboardScreen'));
+const DmrFillScreen = lazy(() => import('./components/DmrFillScreen'));
+
 const ReportClientDashboardScreen = lazy(() => import('./components/ReportClientDashboardScreen'));
 import ReportAdminProtectedRoute from './components/ReportAdminProtectedRoute';
 import ReportClientProtectedRoute from './components/ReportClientProtectedRoute';
@@ -133,6 +140,7 @@ export default function App() {
               
 <Route path="/drive" element={<ProtectedRoute role="admin"><DriveFileManager /></ProtectedRoute>} />
               <Route path="/admin/professional-dashboard" element={<ProtectedRoute role="admin"><AdminProfessionalDashboardScreen /></ProtectedRoute>} />
+              <Route path="/admin/update-settings" element={<ProtectedRoute role="admin"><AdminUpdateSettingsScreen /></ProtectedRoute>} />
               <Route path="/admin-dashboard" element={<ProtectedRoute role="admin"><AdminDashboardScreen /></ProtectedRoute>} />
               <Route path="/admin/profile" element={<ProtectedRoute role="admin"><AdminProfileScreen /></ProtectedRoute>} />
               <Route path="/admin/attendance-timing" element={<ProtectedRoute role="admin"><AdminAttendanceTimingScreen /></ProtectedRoute>} />
@@ -186,9 +194,13 @@ export default function App() {
           <Route path="/admin/staff" element={<ProtectedRoute role="admin"><AdminStaffManagementScreen /></ProtectedRoute>} />
           <Route path="/admin/device-management" element={<ProtectedRoute role="admin"><AdminDeviceManagementScreen /></ProtectedRoute>} />
 <Route path="/admin/storage" element={<ProtectedRoute role="admin"><AdminStorageScreen /></ProtectedRoute>} />
+              <Route path="/admin/dmr-settings" element={<ReportAdminProtectedRoute><AdminDmrSettingsScreen /></ReportAdminProtectedRoute>} />
+              <Route path="/admin/dmr-dashboard" element={<ReportAdminProtectedRoute><AdminDmrDashboardScreen /></ReportAdminProtectedRoute>} />
+              <Route path="/staff/dmr-fill" element={<DmrFillScreen />} />
 </Routes>
           </MaintenanceWrapper>
         </Suspense>
+        <AppUpdateManager />
         <WhatsAppButton />
       </div>
       </SessionManager>

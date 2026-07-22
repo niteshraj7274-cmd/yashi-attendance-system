@@ -21,6 +21,7 @@ export default function AdminLoginScreen() {
         const session = JSON.parse(sessionStr);
         if (session.role === 'admin') {
           navigate('/admin-dashboard');
+      window.dispatchEvent(new CustomEvent('check-for-updates'));
         }
       } catch(e) {}
     }

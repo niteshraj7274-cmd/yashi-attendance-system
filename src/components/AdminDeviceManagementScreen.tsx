@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Search, ShieldCheck, ShieldAlert, MonitorSmartphone, Trash2, Edit, CheckCircle, RefreshCw, XCircle, Ban, RotateCcw, Power, Eye, History, Filter } from 'lucide-react';
 import { collection, query, getDocs, updateDoc, doc, deleteDoc, orderBy, getDoc, serverTimestamp, addDoc, where } from 'firebase/firestore';
@@ -48,6 +48,8 @@ export default function AdminDeviceManagementScreen() {
   
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, title: '', message: '', onConfirm: () => {}, requireReason: false });
   const [actionReason, setActionReason] = useState('');
+  const actionReasonRef = useRef(actionReason);
+  useEffect(() => { actionReasonRef.current = actionReason; }, [actionReason]);
   
   const [toastMessage, setToastMessage] = useState('');
   const [selectedDevice, setSelectedDevice] = useState<any>(null);
@@ -92,19 +94,20 @@ export default function AdminDeviceManagementScreen() {
     }
   };
 
-  const executeActionWithReason = async (deviceId: string, actionName: string, actionFn: () => Promise<void>) => {
+  const executeActionWithReason = async (deviceId: string, actionName: string, actionFn: (reason: string) => Promise<void>) => {
     setConfirmDialog({
       isOpen: true,
       title: `Confirm ${actionName}`,
       message: `Are you sure you want to ${actionName.toLowerCase()} this device? Please provide a reason below.`,
       requireReason: true,
       onConfirm: async () => {
-        if (!actionReason.trim()) {
+        const currentReason = actionReasonRef.current;
+        if (!currentReason.trim()) {
            alert("Reason is required.");
            return;
         }
-        setConfirmDialog({ ...confirmDialog, isOpen: false });
-        await actionFn();
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+        await actionFn(currentReason);
         setActionReason('');
       }
     });
@@ -123,7 +126,7 @@ export default function AdminDeviceManagementScreen() {
     });
   };
 
-  const updateStatus = async (deviceId: string, newStatus: string, reason: string = '') => {
+  const updateStatus = async (deviceId: string, newStatus: string, reason: string = '', customToastMessage: string = '') => {
     try {
       const device = devices.find(d => d.id === deviceId);
       const adminName = getAdminName();
@@ -132,6 +135,7 @@ export default function AdminDeviceManagementScreen() {
       if (newStatus === 'Approved') {
         updateData.approvalDate = new Date().toISOString();
         updateData.approvedBy = adminName;
+        updateData.sessionRevoked = false;
         
         // If this is an approval, ensure all OTHER devices for this staff are marked as Inactive/Replaced
         if (device && device.staffUid) {
@@ -154,7 +158,7 @@ export default function AdminDeviceManagementScreen() {
         reason: reason
       });
 
-      showToast(`Device ${newStatus}`);
+      showToast(customToastMessage || `Device ${newStatus}`);
       fetchDevices();
     } catch (err) {
       console.error(err);
@@ -163,24 +167,24 @@ export default function AdminDeviceManagementScreen() {
   };
 
   const removeDevice = async (deviceId: string) => {
-    executeActionWithReason(deviceId, 'Delete Device', async () => {
+    executeActionWithReason(deviceId, 'Delete Device', async (reasonStr) => {
       try {
         const device = devices.find(d => d.id === deviceId);
         const adminName = getAdminName();
         
         // Log delete reason
         await addDoc(collection(db, 'device_audit_logs'), {
-          deviceId, staffName: device?.staffName, action: 'Delete Device', reason: actionReason, adminName, timestamp: serverTimestamp()
+          deviceId, staffName: device?.staffName, action: 'Delete Device', reason: reasonStr, adminName, timestamp: serverTimestamp()
         });
         
-        // Soft delete / Update status to deleted
-        await updateDoc(doc(db, 'registered_devices', deviceId), { status: 'Deleted', deletedReason: actionReason });
+        // Hard delete from Firebase
+        await deleteDoc(doc(db, 'registered_devices', deviceId));
         
-        logAuditActivity(adminName, 'Device Security', device?.staffName || 'Device', 'Delete', 'Deleted Device', {
-          role: 'Admin', userName: adminName, action: 'Delete', moduleName: 'Device Management', deviceId: deviceId, reason: actionReason
+        logAuditActivity(adminName, 'Device Security', device?.staffName || 'Device', 'Delete', 'Permanently Deleted Device', {
+          role: 'Admin', userName: adminName, action: 'Delete', moduleName: 'Device Management', deviceId: deviceId, reason: reasonStr
         });
         
-        showToast('Device marked as Deleted');
+        showToast('Device permanently deleted');
         fetchDevices();
       } catch (err) {
         console.error(err);
@@ -189,19 +193,19 @@ export default function AdminDeviceManagementScreen() {
   };
 
   const replaceDevice = async (deviceId: string) => {
-    executeActionWithReason(deviceId, 'Replace Device', async () => {
+    executeActionWithReason(deviceId, 'Replace Device', async (reasonStr) => {
       try {
         const device = devices.find(d => d.id === deviceId);
         const adminName = getAdminName();
         
         await addDoc(collection(db, 'device_audit_logs'), {
-          deviceId, staffName: device?.staffName, action: 'Replace Device', reason: actionReason, adminName, timestamp: serverTimestamp()
+          deviceId, staffName: device?.staffName, action: 'Replace Device', reason: reasonStr, adminName, timestamp: serverTimestamp()
         });
         
-        await updateDoc(doc(db, 'registered_devices', deviceId), { status: 'Replaced', replacedReason: actionReason });
+        await updateDoc(doc(db, 'registered_devices', deviceId), { status: 'Replaced', replacedReason: reasonStr });
         
         logAuditActivity(adminName, 'Device Security', device?.staffName || 'Device', 'Replace', 'Replaced Device', {
-          role: 'Admin', userName: adminName, action: 'Replace', moduleName: 'Device Management', deviceId: deviceId, reason: actionReason
+          role: 'Admin', userName: adminName, action: 'Replace', moduleName: 'Device Management', deviceId: deviceId, reason: reasonStr
         });
         
         showToast('Device Replaced successfully');
@@ -391,7 +395,7 @@ export default function AdminDeviceManagementScreen() {
                         <CheckCircle size={16} className="text-emerald-500 mb-1 group-hover:scale-110 transition-transform" />
                         <span className="text-[8px] font-bold uppercase tracking-wider text-slate-500">Approve</span>
                      </button>
-                     <button onClick={() => executeActionWithReason(device.id, 'Reject', () => updateStatus(device.id, 'Rejected', actionReason))} className="flex flex-col items-center justify-center p-2 hover:bg-red-50 rounded-lg transition-colors group">
+                     <button onClick={() => executeActionWithReason(device.id, 'Reject', (r) => updateStatus(device.id, 'Rejected', r))} className="flex flex-col items-center justify-center p-2 hover:bg-red-50 rounded-lg transition-colors group">
                         <XCircle size={16} className="text-red-500 mb-1 group-hover:scale-110 transition-transform" />
                         <span className="text-[8px] font-bold uppercase tracking-wider text-slate-500">Reject</span>
                      </button>
@@ -399,7 +403,11 @@ export default function AdminDeviceManagementScreen() {
                   )}
                   { (device.status === 'Approved' || device.status === 'Active') && (
                      <>
-                     <button onClick={() => executeActionWithReason(device.id, 'Block Device', () => updateStatus(device.id, 'Blocked', actionReason))} className="flex flex-col items-center justify-center p-2 hover:bg-orange-50 rounded-lg transition-colors group">
+                     <button onClick={() => executeActionWithReason(device.id, 'Suspend Device', (r) => updateStatus(device.id, 'Suspended', r))} className="flex flex-col items-center justify-center p-2 hover:bg-purple-50 rounded-lg transition-colors group">
+                        <Power size={16} className="text-purple-500 mb-1 group-hover:scale-110 transition-transform" />
+                        <span className="text-[8px] font-bold uppercase tracking-wider text-slate-500">Suspend</span>
+                     </button>
+                     <button onClick={() => executeActionWithReason(device.id, 'Block Device', (r) => updateStatus(device.id, 'Blocked', r))} className="flex flex-col items-center justify-center p-2 hover:bg-orange-50 rounded-lg transition-colors group">
                         <Ban size={16} className="text-orange-500 mb-1 group-hover:scale-110 transition-transform" />
                         <span className="text-[8px] font-bold uppercase tracking-wider text-slate-500">Block</span>
                      </button>
@@ -408,6 +416,12 @@ export default function AdminDeviceManagementScreen() {
                         <span className="text-[8px] font-bold uppercase tracking-wider text-slate-500">Replace</span>
                      </button>
                      </>
+                  )}
+                  { device.status === 'Suspended' && (
+                     <button onClick={() => updateStatus(device.id, 'Approved', 'Device reactivated by admin', 'Device has been reactivated successfully.')} className="flex flex-col items-center justify-center p-2 hover:bg-emerald-50 rounded-lg transition-colors group">
+                        <CheckCircle size={16} className="text-emerald-500 mb-1 group-hover:scale-110 transition-transform" />
+                        <span className="text-[8px] font-bold uppercase tracking-wider text-slate-500">Reactivate</span>
+                     </button>
                   )}
                   { device.status === 'Blocked' && (
                      <button onClick={() => updateStatus(device.id, 'Approved')} className="flex flex-col items-center justify-center p-2 hover:bg-emerald-50 rounded-lg transition-colors group">

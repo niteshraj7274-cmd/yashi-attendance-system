@@ -15,6 +15,10 @@ export default function AdminPinManagement() {
   const [jobPinInput, setJobPinInput] = useState('');
   const [jobPinConfirm, setJobPinConfirm] = useState('');
   const [profPinInput, setProfPinInput] = useState('');
+  const [reportPinEnabled, setReportPinEnabled] = useState(true);
+  const [reportPinStatus, setReportPinStatus] = useState('Loading...');
+  const [reportPinInput, setReportPinInput] = useState('');
+  const [reportPinConfirm, setReportPinConfirm] = useState('');
   const [profPinConfirm, setProfPinConfirm] = useState('');
 
   const [message, setMessage] = useState('');
@@ -38,20 +42,25 @@ export default function AdminPinManagement() {
           const data = docSnap.data();
           setJobPinEnabled(data.jobPinEnabled !== false);
           setProfPinEnabled(data.profPinEnabled !== false);
+          setReportPinEnabled(data.reportPinEnabled !== false);
           setJobPinStatus(data.jobPinHash ? 'Set' : 'Not Set');
           setProfPinStatus(data.profPinHash ? 'Set' : 'Not Set');
+          setReportPinStatus(data.reportPinHash ? 'Set' : 'Not Set');
         } else {
           // Defaults if not exist
           const defJobHash = await hashPin('1234');
           const defProfHash = await hashPin('1999');
+          const defReportHash = await hashPin('1234');
           await setDoc(docRef, {
             jobPinEnabled: true,
             profPinEnabled: true,
             jobPinHash: defJobHash,
-            profPinHash: defProfHash
+            profPinHash: defProfHash,
+            reportPinHash: defReportHash
           });
           setJobPinStatus('Set');
           setProfPinStatus('Set');
+          setReportPinStatus('Set');
         }
       } catch (err) {
         console.error(err);
@@ -69,10 +78,10 @@ export default function AdminPinManagement() {
     return null;
   };
 
-  const handleSave = async (type: 'job' | 'prof') => {
+  const handleSave = async (type: 'job' | 'prof' | 'report') => {
     setMessage('');
-    const input = type === 'job' ? jobPinInput : profPinInput;
-    const confirm = type === 'job' ? jobPinConfirm : profPinConfirm;
+    const input = type === 'job' ? jobPinInput : type === 'prof' ? profPinInput : reportPinInput;
+    const confirm = type === 'job' ? jobPinConfirm : type === 'prof' ? profPinConfirm : reportPinConfirm;
 
     if (input) {
       const err = validatePin(input);
@@ -87,16 +96,20 @@ export default function AdminPinManagement() {
       if (type === 'job') {
         updateData.jobPinEnabled = jobPinEnabled;
         if (input) updateData.jobPinHash = await hashPin(input);
-      } else {
+      } else if (type === 'prof') {
         updateData.profPinEnabled = profPinEnabled;
         if (input) updateData.profPinHash = await hashPin(input);
+      } else if (type === 'report') {
+        updateData.reportPinEnabled = reportPinEnabled;
+        if (input) updateData.reportPinHash = await hashPin(input);
       }
 
       await setDoc(docRef, updateData, { merge: true });
 
       if (input) {
          if (type === 'job') setJobPinStatus('Set');
-         else setProfPinStatus('Set');
+         else if (type === 'prof') setProfPinStatus('Set');
+         else setReportPinStatus('Set');
       }
 
       const adminName = 'Admin'; // Or fetch from profile
@@ -107,6 +120,7 @@ export default function AdminPinManagement() {
       setMessage('PIN settings saved successfully!');
       if (type === 'job') { setJobPinInput(''); setJobPinConfirm(''); }
       if (type === 'prof') { setProfPinInput(''); setProfPinConfirm(''); }
+      if (type === 'report') { setReportPinInput(''); setReportPinConfirm(''); }
     } catch (err) {
       console.error(err);
       setMessage('Failed to save PIN settings');
@@ -115,14 +129,17 @@ export default function AdminPinManagement() {
     }
   };
 
-  const handleGenerate = (type: 'job' | 'prof') => {
+  const handleGenerate = (type: 'job' | 'prof' | 'report') => {
     const randomPin = Math.floor(1000 + Math.random() * 9000).toString();
     if (type === 'job') {
       setJobPinInput(randomPin);
       setJobPinConfirm(randomPin);
-    } else {
+    } else if (type === 'prof') {
       setProfPinInput(randomPin);
       setProfPinConfirm(randomPin);
+    } else if (type === 'report') {
+      setReportPinInput(randomPin);
+      setReportPinConfirm(randomPin);
     }
   };
 
@@ -182,6 +199,26 @@ export default function AdminPinManagement() {
           </div>
         </div>
       </div>
-    </div>
+                {/* Report Manager PIN */}
+        <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
+          <div className="flex justify-between items-center mb-4">
+             <h3 className="font-bold text-slate-700 text-sm uppercase">Report Manager</h3>
+             <label className="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" className="sr-only peer" checked={reportPinEnabled} onChange={(e) => setReportPinEnabled(e.target.checked)} />
+              <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
+            </label>
+          </div>
+          <p className="text-xs text-slate-500 mb-4">Status: {reportPinStatus === 'Set' ? '•••• (Set)' : 'Not Set'}</p>
+          
+          <div className="space-y-3">
+             <input type="text" placeholder="New PIN (4-8 digits)" maxLength={8} value={reportPinInput} onChange={e => setReportPinInput(e.target.value.replace(/\D/g, ''))} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-md text-sm outline-none focus:border-emerald-500" />
+             <input type="text" placeholder="Confirm PIN" maxLength={8} value={reportPinConfirm} onChange={e => setReportPinConfirm(e.target.value.replace(/\D/g, ''))} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-md text-sm outline-none focus:border-emerald-500" />
+          </div>
+          <div className="flex gap-2 mt-4">
+             <button onClick={() => handleGenerate('report')} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold py-2 rounded transition-colors flex items-center justify-center gap-1"><RefreshCw size={14}/> Generate</button>
+             <button onClick={() => handleSave('report')} disabled={saving} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 rounded transition-colors flex items-center justify-center gap-1"><Save size={14}/> Save</button>
+          </div>
+        </div>
+      </div>
   );
 }

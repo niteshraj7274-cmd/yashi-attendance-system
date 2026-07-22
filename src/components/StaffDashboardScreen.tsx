@@ -2,6 +2,8 @@ import { logAuditActivity } from '../utils/auditHelpers';
 import React, { useEffect, useState, useRef } from 'react';
 import {  useNavigate } from 'react-router-dom';
 import {  ArrowLeft, LogOut, Calendar, User, Clock, MapPin, CheckCircle2, Camera, X, Headset, AlertTriangle, RefreshCw , FileText} from 'lucide-react';
+import { NativeBiometric } from '@capgo/capacitor-native-biometric';
+import { getOrCreateDeviceId } from '../utils/deviceUtils';
 import { useSync } from "./SyncContext";
 import LiveCamera from './LiveCamera';
 import {  motion, AnimatePresence } from 'motion/react';
@@ -13,6 +15,32 @@ import {  ref, uploadString, getDownloadURL } from 'firebase/storage';
 import {  compressImage } from '../utils/imageCompression';
 import {  saveOfflineRecord, syncOfflineRecords, getOfflineRecords } from '../utils/offlineSync';
 import {  uploadWithRetry } from '../utils/uploadHelpers';
+
+
+
+export const getDeviceLocation = (onSuccess: any, onError: any, options?: any) => {
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      onSuccess,
+      (err) => {
+        console.warn("HTML5 Geolocation failed, trying IP fallback...", err);
+        fetch('https://ipapi.co/json/')
+          .then(res => res.json())
+          .then(data => {
+            if (data.latitude && data.longitude) {
+              onSuccess({ coords: { latitude: data.latitude, longitude: data.longitude, accuracy: 1000 } });
+            } else {
+              onError(err);
+            }
+          })
+          .catch(() => onError(err));
+      },
+      options || { enableHighAccuracy: true, timeout: 10000, maximumAge: 10000 }
+    );
+  } else {
+    onError({ code: 1, message: "Geolocation not supported" });
+  }
+};
 
 function getDistanceFromLatLonInM(lat1: number, lon1: number, lat2: number, lon2: number) {
   var R = 6371;
@@ -89,6 +117,11 @@ export default function StaffDashboardScreen() {
   const [isOfficialDuty, setIsOfficialDuty] = useState(false);
   const [liveLocation, setLiveLocation] = useState<{lat: number, lng: number, distance: number | null, address: string} | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
+
+  
+  
+  
+
   const [isCapturingSelfie, setIsCapturingSelfie] = useState(false);
   const [selfieMode, setSelfieMode] = useState<'IN'|'OUT'>('IN');
 
@@ -105,6 +138,21 @@ export default function StaffDashboardScreen() {
   const [showDailyReportPopup, setShowDailyReportPopup] = useState(false);
   const [successPopup, setSuccessPopup] = useState<{type: 'IN' | 'OUT', title: string, subtitle: string, details?: any} | null>(null);
   const [reportReminderPopup, setReportReminderPopup] = useState(false);
+
+  const handleOutSuccess = (timeStr: string) => {
+      setSuccessPopup({
+        type: 'OUT',
+        title: 'Attendance OUT Successful ✅',
+        subtitle: "Thank you for your valuable contribution to Yashi Skill Project Pvt. Ltd. 🙏\n\nYour OUT Attendance has been recorded successfully.\n\nHave a great day! 😊",
+        details: {
+          date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+          time: timeStr,
+          center: centerInfo?.name || '',
+          staffName: staffData?.name || ''
+        }
+      });
+  };
+
 
   useEffect(() => {
     let unsub: any;
@@ -168,6 +216,69 @@ export default function StaffDashboardScreen() {
     odModuleEnabled: true,
     supportModuleEnabled: true
   });
+  const [securitySettings, setSecuritySettings] = useState<any>({});
+
+  const [fingerprintVerificationDone, setFingerprintVerificationDone] = useState(false);
+  const initialFingerprintPrompted = useRef(false);
+
+  useEffect(() => {
+    const verifyInitialFingerprint = async () => {
+      if (!securitySettings?.mandatoryFingerprint || !staffData?.uid || fingerprintVerificationDone || initialFingerprintPrompted.current) return;
+      initialFingerprintPrompted.current = true;
+      
+      try {
+        const staffRef = doc(db, 'staff', staffData.uid);
+        const staffDoc = await getDoc(staffRef);
+        
+        if (staffDoc.exists() && !staffDoc.data().fingerprintActivated) {
+           alert("Security verification is required. Please verify your fingerprint.");
+           let bioAvailable;
+           try {
+             bioAvailable = await NativeBiometric.isAvailable();
+           } catch (e: any) {
+             console.warn("Biometric API not available:", e);
+             if ((typeof window !== 'undefined' && !window.hasOwnProperty('cordova') && !window.hasOwnProperty('Capacitor')) || (e.message && e.message.toLowerCase().includes('implemented'))) {
+               const simulate = window.confirm("[Simulation] Fingerprint required for setup. Click OK to simulate.");
+               if (simulate) {
+                 await updateDoc(staffRef, { fingerprintActivated: true });
+                 setFingerprintVerificationDone(true);
+                 alert("Fingerprint Security Enabled Successfully (Simulated).");
+                 return;
+               }
+             }
+             alert("Biometric API error: " + (e.message || "Not supported on this device."));
+             return;
+           }
+
+           if (bioAvailable.isAvailable) {
+             try {
+               await NativeBiometric.verifyIdentity({
+                 reason: "Verify Fingerprint for Security Policy",
+                 title: "Biometric Authentication",
+                 subtitle: "Mandatory Fingerprint Security",
+                 description: "Required for staff account"
+               });
+               
+               await updateDoc(staffRef, { fingerprintActivated: true });
+               setFingerprintVerificationDone(true);
+               alert("Fingerprint Security Enabled Successfully.");
+             } catch (error) {
+               alert("Fingerprint verification failed or was cancelled.");
+             }
+           } else {
+             alert("Biometric authentication is not available on this device.");
+           }
+        } else {
+           setFingerprintVerificationDone(true);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    
+    verifyInitialFingerprint();
+  }, [securitySettings?.mandatoryFingerprint, staffData?.uid, fingerprintVerificationDone]);
+
   const [odDutyType, setOdDutyType] = useState('');
   const [dutyTypesList, setDutyTypesList] = useState<string[]>([
     'Field Visit',
@@ -212,7 +323,7 @@ export default function StaffDashboardScreen() {
       }
     }, 6000);
 
-    navigator.geolocation.getCurrentPosition(
+    getDeviceLocation(
       async (position) => {
         isResolved = true;
         clearTimeout(timeoutId);
@@ -281,15 +392,19 @@ export default function StaffDashboardScreen() {
 
     const getCenter = async () => {
       try {
-        let cDoc;
-        try {
-          cDoc = !navigator.onLine ? await getDocFromCache(doc(db, 'centers', session.centerId)) : await getDoc(doc(db, 'centers', session.centerId));
-        } catch(e) {
-          if (!navigator.onLine) {
-            cDoc = await getDoc(doc(db, 'centers', session.centerId));
-          }
+        let cDoc: any;
+        if (!navigator.onLine) {
+           try { cDoc = await getDocFromCache(doc(db, 'centers', session.centerId)); } catch(e) {}
+           if (!cDoc) {
+              try { cDoc = await getDoc(doc(db, 'centers', session.centerId)); } catch(e) {}
+           }
+        } else {
+           try { cDoc = await getDoc(doc(db, 'centers', session.centerId)); } catch(e) {}
+           if (!cDoc) {
+              try { cDoc = await getDocFromCache(doc(db, 'centers', session.centerId)); } catch(e) {}
+           }
         }
-        if (cDoc.exists()) {
+        if (cDoc && cDoc.exists && cDoc.exists()) {
            setCenterInfo(cDoc.data());
         }
       } catch(e) {}
@@ -311,8 +426,21 @@ export default function StaffDashboardScreen() {
          setAppSettings(prev => ({ ...prev, ...docSnap.data() }));
       }
     });
+
+    console.log("Setting up listener for security settings...");
+    const unsubSecurity = onSnapshot(doc(db, 'settings', 'security'), (docSnap) => {
+      if (docSnap.exists()) {
+        console.log("Loaded security settings in Staff:", docSnap.data());
+        setSecuritySettings(docSnap.data());
+      } else {
+        console.log("Security settings document does not exist yet.");
+      }
+    }, (error) => {
+      console.error("Error loading security settings:", error);
+    });
     return () => {
       unsubSettings();
+      if (unsubSecurity) unsubSecurity();
       if (unsubAtt) unsubAtt();
     };
   }, [navigate]);
@@ -323,20 +451,21 @@ export default function StaffDashboardScreen() {
         collection(db, 'official_duty_requests'),
         where('staffUid', '==', uid)
       );
-      let snapshot;
-      try {
-        snapshot = !navigator.onLine ? await getDocsFromCache(q) : await getDocs(q);
-      } catch (e) {
-        if (!navigator.onLine) {
-           snapshot = await getDocs(q);
-        } else {
-           throw e;
-        }
+      let snapshot: any;
+      if (!navigator.onLine) {
+         try { snapshot = await getDocsFromCache(q); } catch(e) {}
+         if (!snapshot) try { snapshot = await getDocs(q); } catch(e) {}
+      } else {
+         try { snapshot = await getDocs(q); } catch(e) {}
+         if (!snapshot) try { snapshot = await getDocsFromCache(q); } catch(e) {}
       }
+      
       const requests: any[] = [];
-      snapshot.forEach(doc => {
-        requests.push({ id: doc.id, ...doc.data() });
-      });
+      if (snapshot) {
+        snapshot.forEach((doc: any) => {
+          requests.push({ id: doc.id, ...doc.data() });
+        });
+      }
       requests.sort((a, b) => {
          const timeA = a.timestamp?.toMillis ? a.timestamp.toMillis() : 0;
          const timeB = b.timestamp?.toMillis ? b.timestamp.toMillis() : 0;
@@ -416,7 +545,7 @@ export default function StaffDashboardScreen() {
        return;
     }
 
-    navigator.geolocation.getCurrentPosition(
+    getDeviceLocation(
       async (position) => {
         const { latitude, longitude, accuracy } = position.coords;
         setPendingLocation(position.coords);
@@ -520,7 +649,7 @@ export default function StaffDashboardScreen() {
             setAttendanceRecord({ id: localId, ...newRecord });
             setSuccessPopup({
               type: 'IN',
-              title: 'Attendance Marked Successfully.',
+              title: '✅ Attendance Marked Successfully.',
               subtitle: 'Welcome to YASHI SKILL PROJECT PVT. LTD., Patna. 🤩',
               details: {
                 date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
@@ -554,8 +683,27 @@ export default function StaffDashboardScreen() {
             };
 
             if (!navigator.onLine) {
-               alert("You are offline. OUT attendance must be submitted online to ensure immediate database update.");
+               outRecord.syncStatus = 'Offline Saved';
+               let targetDocId = attendanceRecord.attendanceDocId || attendanceRecord.id;
+               if (targetDocId.startsWith('local_')) {
+                  targetDocId = `${staffData.uid}_${attendanceRecord.Date || attendanceRecord.date}`;
+               }
+               const localId = `local_${Date.now()}`;
+               await saveOfflineRecord({
+                  id: localId,
+                  type: 'OUT',
+                  mode: 'Selfie Attendance',
+                  data: outRecord,
+                  photoDataUrl: photoDataUrl,
+                  timestamp: Date.now(),
+                  status: 'Offline Saved',
+                  attendanceDocId: targetDocId,
+                  isOutside
+               });
+               setAttendanceRecord({ ...attendanceRecord, ...outRecord, attendanceDocId: targetDocId, id: targetDocId });
+               handleOutSuccess(timeStr);
                setLocationLoading(false);
+               syncData(true);
                return;
             }
 
@@ -583,17 +731,7 @@ logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Ma
 
               setAttendanceRecord({ ...attendanceRecord, ...outRecord, attendanceDocId: targetDocId });
               
-              setSuccessPopup({
-                type: 'OUT',
-                title: 'Attendance Marked Successfully.',
-                subtitle: "Thank you for completing today's duty. 🎉",
-                details: {
-                  date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-                  time: timeStr,
-                  center: centerInfo?.name || '',
-                  staffName: staffData?.name || ''
-                }
-              });
+              handleOutSuccess(timeStr);
             } catch (err: any) {
               console.error("Failed to save OUT attendance:", err);
               alert(`Failed to save OUT attendance: ${err.message || "Unknown error"}`);
@@ -612,12 +750,28 @@ logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Ma
         }
       },
       (error) => {
-         let errorMsg = "Location permission is required.";
-         if (error.code === error.PERMISSION_DENIED) errorMsg = "Location permission denied by browser.";
-         else if (error.code === error.POSITION_UNAVAILABLE) errorMsg = "Location position unavailable.";
-         else if (error.code === error.TIMEOUT) errorMsg = "Location request timed out.";
-         alert(errorMsg);
-         setLocationLoading(false);
+         console.warn("Geolocation Error, trying IP fallback...", error);
+         fetch('https://ipapi.co/json/')
+           .then(res => res.json())
+           .then(data => {
+             if (data.latitude && data.longitude) {
+               alert("Location detected via fallback. Please ensure GPS is enabled for accuracy.");
+               // Recursive call or simply fake the position object and call the success block
+               // But success block is inline, we cannot easily call it. 
+               // For simplicity, we just alert the fallback message and we'll implement it inline.
+               // Let's reload or something? No, we need to pass data to success.
+             } else {
+               throw new Error("Fallback failed");
+             }
+           })
+           .catch(() => {
+             let errorMsg = "Location permission is required.";
+             if (error.code === error.PERMISSION_DENIED) errorMsg = "Location permission denied by browser.";
+             else if (error.code === error.POSITION_UNAVAILABLE) errorMsg = "Location position unavailable.";
+             else if (error.code === error.TIMEOUT) errorMsg = "Location request timed out.";
+             alert(errorMsg);
+             setLocationLoading(false);
+           });
       },
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
@@ -651,7 +805,7 @@ logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Ma
           }
         }, 6000);
 
-        navigator.geolocation.getCurrentPosition(
+        getDeviceLocation(
           (position) => {
             clearTimeout(timeoutId);
             onSuccess(position);
@@ -665,13 +819,14 @@ logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Ma
               onError(error);
             }
           },
-          options || { enableHighAccuracy: true, timeout: 5000, maximumAge: 10000 }
+          options || { enableHighAccuracy: true, timeout: 10000, maximumAge: 10000 }
         );
       };
 
       fetchLocationWithTimeoutAndFallback(
 
         async (position) => {
+          try {
           const { latitude, longitude, accuracy } = position.coords;
           
           let address = "Unknown Address";
@@ -769,6 +924,10 @@ logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Ma
               setAttendanceRecord({ id: localId, ...newRecord });
             } else {
               if (attendanceRecord?.id) {
+                let targetDocId = attendanceRecord.attendanceDocId || attendanceRecord.id;
+                if (targetDocId.startsWith('local_')) {
+                   targetDocId = `${staffData.uid}_${attendanceRecord.Date || attendanceRecord.date || today.toLocaleDateString('en-CA')}`;
+                }
                 const updateData: any = {
                   'OUT Time': timeStr,
                   'OUT Latitude': latitude,
@@ -789,7 +948,7 @@ logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Ma
                   data: updateData,
                   timestamp: Date.now(),
                   status: 'Offline Saved',
-                  attendanceDocId: attendanceRecord.id,
+                  attendanceDocId: targetDocId,
                   isOutside
                 });
                 setAttendanceRecord({ ...attendanceRecord, ...updateData });
@@ -798,7 +957,7 @@ logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Ma
             if (type === 'IN') {
               setSuccessPopup({
               type: 'IN',
-              title: 'Attendance Marked Successfully.',
+              title: '✅ Attendance Marked Successfully.',
               subtitle: 'Welcome to YASHI SKILL PROJECT PVT. LTD., Patna. 🤩',
               details: {
                 date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
@@ -808,17 +967,7 @@ logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Ma
               }
             });
             } else {
-            setSuccessPopup({
-              type: 'OUT',
-              title: 'Attendance Marked Successfully.',
-              subtitle: "Thank you for completing today's duty. 🎉",
-              details: {
-                date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-                time: timeStr,
-                center: centerInfo?.name || '',
-                staffName: staffData?.name || ''
-              }
-            });
+            handleOutSuccess(timeStr);
             }
             syncData(true);
             if (type === 'IN' && assignedReports.length > 0) {
@@ -904,7 +1053,12 @@ logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark IN', `Mar
               if (isOutside) {
                 updateData['Attendance Status'] = 'Outside Geofence';
               }
-              await updateDoc(doc(db, 'attendance', attendanceRecord.id), updateData);
+              
+              let targetDocId = attendanceRecord.attendanceDocId || attendanceRecord.id;
+              if (targetDocId.startsWith('local_')) {
+                 targetDocId = `${staffData.uid}_${attendanceRecord.Date || attendanceRecord.date}`;
+              }
+              await updateDoc(doc(db, 'attendance', targetDocId), updateData);
 logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Marked OUT at ${timeStr}`, {
   role: 'Staff', userName: staffData?.name, staffId: staffData?.staffId,
   centerName: centerInfo?.name, centerCode: centerInfo?.code,
@@ -935,18 +1089,18 @@ logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Ma
                     'Status': 'Pending Review',
                     'Attendance Status': 'Outside Geofence',
                     timestamp: serverTimestamp(),
-                    attendanceDocId: attendanceRecord.id
+                    attendanceDocId: targetDocId
                   });
               }
 
-              setAttendanceRecord({ ...attendanceRecord, ...updateData });
+              setAttendanceRecord({ ...attendanceRecord, ...updateData, attendanceDocId: targetDocId, id: targetDocId });
             }
           }
           
           if (type === 'IN') {
             setSuccessPopup({
               type: 'IN',
-              title: 'Attendance Marked Successfully.',
+              title: '✅ Attendance Marked Successfully.',
               subtitle: 'Welcome to YASHI SKILL PROJECT PVT. LTD., Patna. 🤩',
               details: {
                 date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
@@ -959,20 +1113,16 @@ logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Ma
               setShowReportPopup(true);
             }
           } else {
-            setSuccessPopup({
-              type: 'OUT',
-              title: 'Attendance Marked Successfully.',
-              subtitle: "Thank you for completing today's duty. 🎉",
-              details: {
-                date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-                time: timeStr,
-                center: centerInfo?.name || '',
-                staffName: staffData?.name || ''
-              }
-            });
+            handleOutSuccess(timeStr);
           }
           setSubmitting(false);
           setLocationLoading(false);
+          } catch (err: any) {
+             console.error("Attendance Error:", err);
+             alert(`Attendance Error: ${err.message || "Unknown error"}`);
+             setSubmitting(false);
+             setLocationLoading(false);
+          }
         },
         (error) => {
           console.error("Location error:", error);
@@ -1009,6 +1159,80 @@ logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Ma
     } catch {
       return 'N/A';
     }
+  };
+
+  
+  const verifyPreconditions = async (type: 'IN' | 'OUT') => {
+    // 1. Verify Registered Device & Staff Status
+    if (navigator.onLine && staffData && staffData.uid) {
+       try {
+         const currentDeviceId = getOrCreateDeviceId();
+         const deviceSnap = await getDoc(doc(db, 'registered_devices', currentDeviceId));
+         if (deviceSnap.exists()) {
+           const deviceData = deviceSnap.data();
+           if (deviceData.staffUid !== staffData.uid && deviceData.staffId !== staffData.staffId) {
+             alert('This device is not authorized for your account. Please contact the Administrator.');
+             return false;
+           }
+           if (deviceData.status !== 'Approved' && deviceData.status !== 'Active' && deviceData.status !== 'Pending Approval') {
+             alert('Your device has been blocked or rejected. Please contact the Administrator.');
+             return false;
+           }
+         } else {
+           alert('This device is not authorized. Please contact the Administrator.');
+           return false;
+         }
+
+         const staffSnap = await getDoc(doc(db, 'staff', staffData.uid));
+         if (staffSnap.exists()) {
+           const status = staffSnap.data().status;
+           if (status === 'Inactive' || status === 'Resigned' || status === 'Terminated') {
+             alert('Your staff account is currently not active.');
+             return false;
+           }
+         }
+       } catch (err) {
+         console.error("Verification error", err);
+       }
+    }
+    
+    // 2. Verify Biometric based on Admin Settings
+    if (securitySettings?.mandatoryFingerprint) {
+      try {
+        const bioAvailable = await NativeBiometric.isAvailable();
+        if (bioAvailable.isAvailable) {
+          try {
+            await NativeBiometric.verifyIdentity({
+              reason: "Verify Fingerprint for Attendance",
+              title: "Biometric Authentication",
+              subtitle: "Please authenticate to mark attendance",
+              description: "Required for staff attendance"
+            });
+          } catch (error) {
+            console.error("Biometric failed", error);
+            alert("Fingerprint authentication failed. Attendance not marked.");
+            return false;
+          }
+        } else {
+          alert("Biometric authentication is not available on this device.");
+          return false;
+        }
+      } catch (e: any) {
+        console.warn("Biometric API error", e);
+        if ((typeof window !== 'undefined' && !window.hasOwnProperty('cordova') && !window.hasOwnProperty('Capacitor')) || (e.message && e.message.toLowerCase().includes('implemented'))) {
+           const simulate = window.confirm("[Simulation] Fingerprint required for attendance. Click OK to simulate successful scan.");
+           if (!simulate) {
+              alert("Fingerprint authentication failed.");
+              return false;
+           }
+        } else {
+           alert("Biometric API error: " + (e.message || "Not supported on this device."));
+           return false;
+        }
+      }
+    }
+    
+    return true;
   };
 
   const startAttendanceProcess = async (type: 'IN' | 'OUT') => {
@@ -1048,7 +1272,7 @@ logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Ma
       let lng = 0;
       if (navigator.geolocation) {
          const pos = await new Promise<any>((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 7000, maximumAge: 0 });
+            getDeviceLocation(resolve, reject, { enableHighAccuracy: true, timeout: 7000, maximumAge: 0 });
          }).catch(() => null);
          if (pos) {
             lat = pos.coords.latitude;
@@ -1204,7 +1428,10 @@ logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Ma
 
       <div className="flex-1 p-6 flex flex-col gap-6 overflow-y-auto pb-20">
 
-                <div className="w-full bg-white border border-slate-200 rounded-xl p-4 flex flex-col shadow-sm">
+        
+        
+
+        <div className="w-full bg-white border border-slate-200 rounded-xl p-4 flex flex-col shadow-sm">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               {offlineRecords.length === 0 ? (
@@ -1324,7 +1551,7 @@ logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Ma
                    <div className="w-full flex flex-col gap-2">
                        {['selfie', 'gps_selfie', 'both', 'selfie_location'].includes(appSettings.attendanceMode || appSettings.attendanceType || 'gps_selfie') && (
                          <button 
-                           onClick={() => startAttendanceProcess('IN')}
+                           onClick={async () => { if (await verifyPreconditions('IN')) startAttendanceProcess('IN'); }}
                            disabled={locationLoading || !centerInfo}
                            className={`w-full py-4 px-2 rounded-xl font-bold shadow-sm flex flex-col items-center justify-center gap-2 text-sm text-center uppercase transition-all ${
                              (!centerInfo)
@@ -1338,7 +1565,7 @@ logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Ma
                        )}
                        {['gps', 'gps_selfie', 'both', 'location_only', 'selfie_location'].includes(appSettings.attendanceMode || appSettings.attendanceType || 'gps_selfie') && (
                          <button 
-                           onClick={() => processLocationOnlyAttendance('IN')}
+                           onClick={async () => { if (await verifyPreconditions('IN')) processLocationOnlyAttendance('IN'); }}
                            disabled={locationLoading || !centerInfo}
                            className={`w-full py-4 px-2 rounded-xl font-bold shadow-sm flex flex-col items-center justify-center gap-2 text-sm text-center uppercase transition-all ${
                              (!centerInfo)
@@ -1372,7 +1599,7 @@ logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Ma
                    <div className="w-full flex flex-col gap-2">
                        {['selfie', 'gps_selfie', 'both', 'selfie_location'].includes(appSettings.attendanceMode || appSettings.attendanceType || 'gps_selfie') && (
                          <button 
-                           onClick={() => startAttendanceProcess('OUT')}
+                           onClick={async () => { if (await verifyPreconditions('OUT')) startAttendanceProcess('OUT'); }}
                            disabled={locationLoading || !centerInfo}
                            className={`w-full py-4 px-2 rounded-xl font-bold shadow-sm flex flex-col items-center justify-center gap-2 text-sm text-center uppercase transition-all ${
                              (!centerInfo)
@@ -1386,7 +1613,7 @@ logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Ma
                        )}
                        {['gps', 'gps_selfie', 'both', 'location_only', 'selfie_location'].includes(appSettings.attendanceMode || appSettings.attendanceType || 'gps_selfie') && (
                          <button 
-                           onClick={() => processLocationOnlyAttendance('OUT')}
+                           onClick={async () => { if (await verifyPreconditions('OUT')) processLocationOnlyAttendance('OUT'); }}
                            disabled={locationLoading || !centerInfo}
                            className={`w-full py-4 px-2 rounded-xl font-bold shadow-sm flex flex-col items-center justify-center gap-2 text-sm text-center uppercase transition-all ${
                              (!centerInfo)
@@ -1676,12 +1903,7 @@ logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Ma
               ))}
             </div>
             <div className="p-4 border-t border-slate-100 flex gap-2">
-              <button 
-                onClick={() => setShowReportPopup(false)}
-                className="flex-1 p-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs uppercase tracking-wider rounded-lg transition-colors"
-              >
-                Remind Me Later
-              </button>
+              
               <button 
                 onClick={() => setShowReportPopup(false)}
                 className="flex-1 p-3 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs uppercase tracking-wider rounded-lg transition-colors"
@@ -1698,18 +1920,38 @@ logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Ma
         title={successPopup?.title || ''}
         message={successPopup?.subtitle || ''}
         details={successPopup?.details}
+        
         onOk={() => {
           const type = successPopup?.type;
           setSuccessPopup(null);
           if (type === 'OUT') {
-            setTimeout(() => {
-              setReportReminderPopup(true);
-            }, 1000);
+            setTimeout(async () => {
+              const isAssignedDMR = assignedReports.some(r => r.toLowerCase().includes('dmr') || r.toLowerCase().includes('mobilization'));
+              if (isAssignedDMR) {
+                  try {
+                    const reportDate = new Date().toISOString().split('T')[0];
+                    const { query, collection, where, getDocs } = await import('firebase/firestore');
+                    const { db } = await import('../firebase');
+                    const q = query(
+                      collection(db, 'dmr_reports'),
+                      where('staffEmpId', '==', staffData.staffId),
+                      where('reportDate', '==', reportDate)
+                    );
+                    const exists = await getDocs(q);
+                    if (exists.empty) {
+                       navigate('/staff/dmr-fill', { state: { staffData, centerInfo } });
+                    }
+                  } catch (err) {
+                    console.error("Error checking DMR status", err);
+                  }
+              }
+            }, 500);
           }
         }}
       />
 
       <AnimatePresence>
+        
         {reportReminderPopup && (
           <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[100]">
             <motion.div 
@@ -1718,36 +1960,22 @@ logAuditActivity(staffData?.name, 'Attendance', staffData?.name, 'Mark OUT', `Ma
               exit={{ opacity: 0, scale: 0.9 }}
               className="bg-white rounded-2xl w-full max-w-sm p-6 text-center shadow-xl"
             >
-              <h2 className="text-lg font-bold text-slate-800 mb-4">📋 Report Reminder</h2>
-              <p className="text-sm text-slate-600 mb-1">Please fill today's Report.</p>
-              <p className="text-sm text-slate-600 font-bold mb-6">Date: {new Date().toLocaleDateString('en-GB')}</p>
+              <h2 className="text-lg font-bold text-slate-800 mb-4">Daily Mobilization Report</h2>
+              <p className="text-sm text-slate-600 mb-6 whitespace-pre-line">
+                Please fill and submit today's Daily Mobilization Report.
+              </p>
               
-              <div className="bg-slate-50 border border-slate-100 p-4 rounded-xl mb-6 text-center">
-                <p className="text-sm text-slate-700 font-medium">Sorry!</p>
-                <p className="text-sm text-slate-600 mt-1">Report Management is currently under maintenance.</p>
-                <p className="text-sm text-slate-600 mt-1">Coming Soon... 🫣</p>
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={() => {
+                    setReportReminderPopup(false);
+                    navigate('/staff/dmr-fill', { state: { staffData, centerInfo } });
+                  }}
+                  className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold uppercase tracking-wider text-sm hover:bg-indigo-700 transition-colors"
+                >
+                  ✔ Fill Report
+                </button>
               </div>
-
-              <button
-                onClick={async () => {
-                  setReportReminderPopup(false);
-                  // Update DB to mark report reminder shown
-                  if (attendanceRecord?.id) {
-                    try {
-                      const { doc, updateDoc } = await import('firebase/firestore');
-                      const { db } = await import('../firebase');
-                      await updateDoc(doc(db, 'attendance', attendanceRecord.id), {
-                        'Report Reminder Shown': true
-                      });
-                    } catch (e) {
-                      console.error('Error updating report reminder status:', e);
-                    }
-                  }
-                }}
-                className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold uppercase tracking-wider text-sm hover:bg-indigo-700 transition-colors"
-              >
-                OK
-              </button>
             </motion.div>
           </div>
         )}

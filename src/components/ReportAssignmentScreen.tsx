@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, CheckSquare, Trash2 } from 'lucide-react';
+import { ArrowLeft, CheckSquare, Trash2 } from 'lucide-react';
 import { collection, onSnapshot, addDoc, deleteDoc, doc, query, getDocs, where } from 'firebase/firestore';
 import { db } from '../firebase';
 
 export default function ReportAssignmentScreen() {
-  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [reports, setReports] = useState<any[]>([]);
   const [centers, setCenters] = useState<any[]>([]);
@@ -22,17 +21,16 @@ export default function ReportAssignmentScreen() {
     const unsubReports = onSnapshot(collection(db, 'report_definitions'), snap => {
       setReports(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
-    const unsubCenters = onSnapshot(collection(db, 'report_centers'), snap => {
+    const unsubCenters = onSnapshot(collection(db, 'centers'), snap => {
       setCenters(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
-    const unsubStaff = onSnapshot(collection(db, 'report_staff'), snap => {
+    const unsubStaff = onSnapshot(collection(db, 'staff'), snap => {
       setStaffList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
     const unsubAssignments = onSnapshot(collection(db, 'report_assignments'), snap => {
       setAssignments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       setLoading(false);
     });
-
     return () => { unsubReports(); unsubCenters(); unsubStaff(); unsubAssignments(); };
   }, []);
 
@@ -90,7 +88,7 @@ export default function ReportAssignmentScreen() {
   return (
     <div className="flex flex-col min-h-screen bg-slate-50 text-slate-900 font-sans">
       <div className="bg-orange-700 text-white h-20 flex items-center px-6 shadow-md gap-4">
-        <button onClick={() => navigate('/report-management/admin-dashboard')} className="p-2 -ml-2 rounded-full hover:bg-white/10 transition-colors">
+        <button onClick={() => window.history.back()} className="p-2 -ml-2 rounded-full hover:bg-white/10 transition-colors">
           <ArrowLeft size={24} />
         </button>
         <div className="flex-1">
@@ -101,6 +99,7 @@ export default function ReportAssignmentScreen() {
       <div className="flex-1 p-6 overflow-y-auto">
         <form onSubmit={handleAssign} className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 flex flex-col gap-4 mb-6">
           <h2 className="text-sm font-bold text-slate-800 uppercase border-b pb-2">Assign Report</h2>
+          
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="text-xs font-bold text-slate-500 uppercase">1. Select Report</label>
@@ -109,6 +108,7 @@ export default function ReportAssignmentScreen() {
                 {reports.map(r => <option key={r.id} value={r.id}>{r.name} ({r.code})</option>)}
               </select>
             </div>
+            
             <div>
               <label className="text-xs font-bold text-slate-500 uppercase">2. Select Center</label>
               <select required value={formData.centerId} onChange={e => setFormData({...formData, centerId: e.target.value, staffId: ''})} className="w-full p-2 border rounded mt-1">
@@ -116,6 +116,7 @@ export default function ReportAssignmentScreen() {
                 {centers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
+            
             <div>
               <label className="text-xs font-bold text-slate-500 uppercase">3. Select Staff</label>
               <select required value={formData.staffId} onChange={e => setFormData({...formData, staffId: e.target.value})} className="w-full p-2 border rounded mt-1" disabled={!formData.centerId}>
@@ -124,6 +125,7 @@ export default function ReportAssignmentScreen() {
               </select>
             </div>
           </div>
+
           <button type="submit" className="mt-2 p-3 bg-orange-600 text-white rounded-lg font-bold uppercase transition-colors hover:bg-orange-700">Assign</button>
         </form>
 

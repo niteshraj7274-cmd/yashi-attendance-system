@@ -9,7 +9,7 @@ export default function ReportAdminDashboardScreen() {
   const navigate = useNavigate();
 
   const handleLogout = async () => {
-    await signOut(auth);
+    
     localStorage.removeItem('reportAdminSession');
     navigate('/report-management');
   };
@@ -80,6 +80,37 @@ export default function ReportAdminDashboardScreen() {
             <div>
               <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">Report Assignment</h3>
               <p className="text-xs text-slate-500 mt-1">Assign reports to staff at centers</p>
+            </div>
+          </motion.button>
+          <motion.button 
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+            onClick={() => navigate("/admin/dmr-dashboard")}
+            className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 flex items-center gap-4 hover:border-blue-300 hover:bg-blue-50 transition-all text-left group"
+          >
+            <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center shrink-0 group-hover:bg-blue-200 transition-colors">
+              <FileText size={24} />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">DMR Dashboard</h3>
+              <p className="text-xs text-slate-500 mt-1">View submitted DMR reports</p>
+            </div>
+          </motion.button>
+          
+          <motion.button 
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4 }}
+            onClick={() => navigate("/admin/dmr-settings")}
+            className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 flex items-center gap-4 hover:border-teal-300 hover:bg-teal-50 transition-all text-left group"
+          >
+            <div className="w-12 h-12 bg-teal-100 text-teal-600 rounded-lg flex items-center justify-center shrink-0 group-hover:bg-teal-200 transition-colors">
+              <Settings size={24} />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">DMR Settings</h3>
+              <p className="text-xs text-slate-500 mt-1">Configure DMR categories & options</p>
             </div>
           </motion.button>
         </div>

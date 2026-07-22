@@ -247,7 +247,8 @@ export default function AdminDashboardScreen() {
     { label: 'Center Management', icon: Building2, path: '/admin/centers', color: 'bg-blue-600', module: 'all' },
     { label: 'Staff Management', icon: UserCircle, path: '/admin/staff', color: 'bg-indigo-600', module: 'all' },
     { label: 'Support Management', icon: Headset, path: '/admin/support-management', color: 'bg-orange-600', module: 'supportModuleEnabled' },
-    { label: 'Professional Dashboard', icon: ShieldCheck, path: '#', action: () => setShowPinModal(true), color: 'bg-emerald-700', module: 'all' }
+    { label: 'Professional Dashboard', icon: ShieldCheck, path: '#', action: () => setShowPinModal(true), color: 'bg-emerald-700', module: 'all' },
+    { label: 'Security Settings', icon: Settings, path: '/admin/settings', color: 'bg-red-600', module: 'all' }
   ].filter(item => item.module === 'all' || appSettings[item.module] !== false);
 
   return (
