@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, ShieldCheck, Lock, RefreshCw } from 'lucide-react';
+import { ArrowLeft, ShieldCheck, Lock, RefreshCw, Fingerprint } from 'lucide-react';
+import { NativeBiometric } from '@capgo/capacitor-native-biometric';
 import { useSync } from './SyncContext';
 import { logAuditActivity } from '../utils/auditHelpers';
 import { motion } from 'motion/react';
@@ -13,19 +14,80 @@ export default function AdminLoginScreen() {
   const [pin, setPin] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [isBioAvailable, setIsBioAvailable] = useState(false);
   const { syncData, isSyncing } = useSync();
-  React.useEffect(() => {
+
+  useEffect(() => {
     const sessionStr = localStorage.getItem('userSession');
     if (sessionStr) {
       try {
         const session = JSON.parse(sessionStr);
         if (session.role === 'admin') {
           navigate('/admin-dashboard');
-      window.dispatchEvent(new CustomEvent('check-for-updates'));
+          window.dispatchEvent(new CustomEvent('check-for-updates'));
+          return;
         }
       } catch(e) {}
     }
+
+    let isMounted = true;
+    const checkBiometrics = async () => {
+      try {
+        const result = await NativeBiometric.isAvailable();
+        if (isMounted && result?.isAvailable) {
+          setIsBioAvailable(true);
+        }
+      } catch (err) {
+        if (isMounted) setIsBioAvailable(false);
+      }
+    };
+    checkBiometrics();
+
+    return () => {
+      isMounted = false;
+    };
   }, [navigate]);
+
+  const handleBiometricLogin = async () => {
+    setLoading(true);
+    setError('');
+
+    try {
+      const bioCheck = await NativeBiometric.isAvailable();
+      if (!bioCheck?.isAvailable) {
+        setError('Biometric authentication is not available on this device.');
+        setLoading(false);
+        return;
+      }
+
+      await NativeBiometric.verifyIdentity({
+        reason: "Authenticate with biometrics to access Admin Portal",
+        title: "Admin Biometric Login",
+        subtitle: "Scan fingerprint or face to authenticate",
+      });
+
+      localStorage.setItem('userSession', JSON.stringify({
+        role: 'admin'
+      }));
+      logAuditActivity('Admin', 'Authentication', 'Admin', 'Biometric Login', 'Admin authenticated using biometrics', {
+        role: 'Admin',
+        userName: 'Admin',
+        moduleName: 'Authentication',
+        action: 'Biometric Login'
+      });
+      navigate(location.state?.redirect || '/admin-dashboard');
+    } catch (err: any) {
+      console.error('Biometric authentication error:', err);
+      const errMsg = err?.message || '';
+      if (errMsg.toLowerCase().includes('cancel') || errMsg.toLowerCase().includes('user_cancel')) {
+        setError('');
+      } else {
+        setError('Biometric verification failed. Please use your 4-digit PIN.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -137,8 +199,23 @@ export default function AdminLoginScreen() {
               {loading ? (
                 <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
               ) : (
-                "AUTHENTICATE"
+                "AUTHENTICATE WITH PIN"
               )}
+            </button>
+
+            <div className="relative my-2 flex items-center justify-center">
+              <div className="border-t border-slate-200 w-full"></div>
+              <span className="bg-white px-3 text-[10px] uppercase font-bold text-slate-400 absolute">OR</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleBiometricLogin}
+              disabled={loading}
+              className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 px-4 rounded-lg shadow-sm transition-all active:scale-[0.98] disabled:opacity-70 flex justify-center items-center gap-2.5 text-sm"
+            >
+              <Fingerprint size={20} className="text-emerald-400" />
+              <span>USE BIOMETRICS / FINGERPRINT</span>
             </button>
           </form>
         </motion.div>

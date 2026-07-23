@@ -10,7 +10,6 @@ import AdminDeviceManagementScreen from './components/AdminDeviceManagementScree
 
 import { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import AppUpdateManager from './components/AppUpdateManager';
 import MaintenanceWrapper from './components/MaintenanceWrapper';
 const SplashScreen = lazy(() => import('./components/SplashScreen'));
 const HomeScreen = lazy(() => import('./components/HomeScreen'));
@@ -200,7 +199,6 @@ export default function App() {
 </Routes>
           </MaintenanceWrapper>
         </Suspense>
-        <AppUpdateManager />
         <WhatsAppButton />
       </div>
       </SessionManager>
