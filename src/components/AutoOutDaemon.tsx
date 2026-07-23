@@ -1,29 +1,67 @@
-import { useEffect } from 'react';
-import { collection, query, where, getDocs, updateDoc, doc, setDoc, getDoc } from 'firebase/firestore';
+import { useEffect, useRef } from 'react';
+import { collection, query, where, getDocs, updateDoc, doc, setDoc, getDoc, getDocsFromCache, getDocFromCache } from 'firebase/firestore';
 import { db } from '../firebase';
 
 export default function AutoOutDaemon() {
+  const cacheRef = useRef<{
+     activeCenters?: any[];
+     defaultTimings?: any;
+     centerTimings: Record<string, any>;
+     lastFetch: number;
+  }>({
+     centerTimings: {},
+     lastFetch: 0
+  });
+
   useEffect(() => {
     const checkInterval = setInterval(async () => {
       try {
         const today = new Date().toLocaleDateString('en-CA');
+        const nowMs = Date.now();
         
-        // Fetch all centers to know their timing configurations
-        const centersSnap = await getDocs(collection(db, 'centers'));
-        const activeCenters = centersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        let activeCenters = cacheRef.current.activeCenters;
+        let defaultTimings = cacheRef.current.defaultTimings;
+        
+        if (!activeCenters || nowMs - cacheRef.current.lastFetch > 300000) { // 5 minutes cache
+           const centersSnap = navigator.onLine ? await getDocs(collection(db, 'centers')) : await getDocsFromCache(collection(db, 'centers')).catch(()=>({docs:[]})) as any;
+           activeCenters = centersSnap.docs ? centersSnap.docs.map((d: any) => ({ id: d.id, ...d.data() })) : [];
+           cacheRef.current.activeCenters = activeCenters;
+           
+           const defaultTimingSnap = navigator.onLine ? await getDoc(doc(db, 'center_timings', 'default')) : await getDocFromCache(doc(db, 'center_timings', 'default')).catch(()=>({exists:()=>false})) as any;
+           defaultTimings = defaultTimingSnap.exists() ? defaultTimingSnap.data() : { autoOutEnabled: false, autoOutTime: '18:00' };
+           cacheRef.current.defaultTimings = defaultTimings;
+           cacheRef.current.lastFetch = nowMs;
+        }
 
-        const defaultTimingSnap = await getDoc(doc(db, 'center_timings', 'default'));
-        const defaultTimings = defaultTimingSnap.exists() ? defaultTimingSnap.data() : { autoOutEnabled: false, autoOutTime: '18:00' };
+        if (!activeCenters) return;
 
         for (const center of activeCenters) {
           // Check if this center has already been auto-out processed today
           const logRef = doc(db, 'system_logs', `autoOut_${today}_${center.id}`);
-          const logSnap = await getDoc(logRef);
-          if (logSnap.exists()) continue;
+          let logSnap: any;
+          if (!navigator.onLine) {
+             try { logSnap = await getDocFromCache(logRef); } catch(e) {}
+          }
+          if (!logSnap) {
+             logSnap = await getDoc(logRef);
+          }
+          if (logSnap && logSnap.exists()) continue;
 
           // Get center specific timings or default
-          const centerTimingSnap = await getDoc(doc(db, 'center_timings', center.id));
-          const timings = centerTimingSnap.exists() ? { ...defaultTimings, ...centerTimingSnap.data() } : defaultTimings;
+          let centerTiming = cacheRef.current.centerTimings[center.id];
+          if (!centerTiming || nowMs - cacheRef.current.lastFetch > 300000) {
+             let centerTimingSnap: any;
+             if (!navigator.onLine) {
+                try { centerTimingSnap = await getDocFromCache(doc(db, 'center_timings', center.id)); } catch(e) {}
+             }
+             if (!centerTimingSnap) {
+                centerTimingSnap = await getDoc(doc(db, 'center_timings', center.id));
+             }
+             cacheRef.current.centerTimings[center.id] = centerTimingSnap && centerTimingSnap.exists() ? centerTimingSnap.data() : null;
+             centerTiming = cacheRef.current.centerTimings[center.id];
+          }
+          
+          const timings = centerTiming ? { ...defaultTimings, ...centerTiming } : defaultTimings;
 
           if (timings.autoOutEnabled) {
             const autoOutTime = timings.autoOutTime || '18:00';
@@ -36,7 +74,9 @@ export default function AutoOutDaemon() {
               // Time has passed for this center, let's run the auto out
               await processAutoOutForCenter(today, center, autoOutTime, timings.autoOutReason || 'Auto Attendance OUT by Admin Settings');
               // Mark as run
-              await setDoc(logRef, { runAt: new Date().toISOString(), status: 'Success', centerId: center.id });
+              if (navigator.onLine) {
+                await setDoc(logRef, { runAt: new Date().toISOString(), status: 'Success', centerId: center.id });
+              }
             }
           }
         }

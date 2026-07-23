@@ -3,6 +3,7 @@ import { MessageCircle } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { motion } from 'motion/react';
+import { openWhatsApp } from '../utils/whatsappHelper';
 
 export default function WhatsAppButton() {
   const [whatsapp, setWhatsapp] = useState('+91 7070972806');
@@ -43,8 +44,7 @@ export default function WhatsAppButton() {
   };
 
   const handleClick = () => {
-    const number = whatsapp.replace(/[^0-9]/g, '');
-    window.open(`https://wa.me/${number}?text=${getWhatsAppMessage()}`, '_blank');
+    openWhatsApp(whatsapp, getWhatsAppMessage());
   };
 
   return (

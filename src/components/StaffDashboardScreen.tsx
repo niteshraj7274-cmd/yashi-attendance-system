@@ -155,21 +155,33 @@ export default function StaffDashboardScreen() {
 
 
   useEffect(() => {
-    let unsub: any;
-    const timer = setTimeout(() => {
+    let timer: any;
+    const fetchReports = async () => {
       if (staffData?.staffId) {
-        const q = query(collection(db, 'report_assignments'), where('staffEmpId', '==', staffData.staffId));
-        unsub = onSnapshot(q, (snap) => {
-          const reports = snap.docs.map(doc => doc.data().reportName || doc.data().reportId);
-          setAssignedReports(reports);
-        });
+        try {
+          const q = query(collection(db, 'report_assignments'), where('staffEmpId', '==', staffData.staffId));
+          let snap: any;
+          if (!navigator.onLine) {
+             try { snap = await getDocsFromCache(q); } catch(e) {}
+          }
+          if (!snap) {
+             snap = await getDocs(q);
+          }
+          if (snap) {
+            const reports = snap.docs.map((doc: any) => doc.data().reportName || doc.data().reportId);
+            setAssignedReports(reports);
+          }
+        } catch(e) {}
       }
+    };
+    
+    timer = setTimeout(() => {
+      fetchReports();
     }, 2000);
   
   
   return () => {
       clearTimeout(timer);
-      if (unsub) unsub();
     };
   }, [staffData]);
 
@@ -418,30 +430,27 @@ export default function StaffDashboardScreen() {
     }
     setDeviceId(storedDeviceId);
 
-    const unsubAtt = checkTodayAttendance(session.uid);
+    checkTodayAttendance(session.uid);
     checkODRequests(session.uid);
     
-    const unsubSettings = onSnapshot(doc(db, 'settings', 'appSettings'), (docSnap) => {
-      if (docSnap.exists()) {
-         setAppSettings(prev => ({ ...prev, ...docSnap.data() }));
+    const loadSettings = async () => {
+      try {
+        const appSnap = await getDoc(doc(db, 'settings', 'appSettings'));
+        if (appSnap.exists()) {
+           setAppSettings(prev => ({ ...prev, ...appSnap.data() }));
+        }
+        
+        const secSnap = await getDoc(doc(db, 'settings', 'security'));
+        if (secSnap.exists()) {
+          setSecuritySettings(secSnap.data());
+        }
+      } catch (e) {
+        console.error("Error loading settings", e);
       }
-    });
+    };
+    loadSettings();
 
-    console.log("Setting up listener for security settings...");
-    const unsubSecurity = onSnapshot(doc(db, 'settings', 'security'), (docSnap) => {
-      if (docSnap.exists()) {
-        console.log("Loaded security settings in Staff:", docSnap.data());
-        setSecuritySettings(docSnap.data());
-      } else {
-        console.log("Security settings document does not exist yet.");
-      }
-    }, (error) => {
-      console.error("Error loading security settings:", error);
-    });
     return () => {
-      unsubSettings();
-      if (unsubSecurity) unsubSecurity();
-      if (unsubAtt) unsubAtt();
     };
   }, [navigate]);
 
@@ -477,7 +486,7 @@ export default function StaffDashboardScreen() {
     }
   };
 
-  const checkTodayAttendance = (uid: string) => {
+  const checkTodayAttendance = async (uid: string) => {
     try {
       const today = new Date().toLocaleDateString('en-CA');
       const q = query(
@@ -486,31 +495,37 @@ export default function StaffDashboardScreen() {
         where('Date', '==', today)
       );
       
-      return onSnapshot(q, async (snap) => {
-        let rec: any = null;
-        if (!snap.empty) {
-          const docSnap = snap.docs[0];
-          rec = { id: docSnap.id, ...docSnap.data() };
+      let snap: any;
+      if (!navigator.onLine) {
+         try { snap = await getDocsFromCache(q); } catch(e) {}
+      }
+      if (!snap) {
+         snap = await getDocs(q);
+      }
+      
+      let rec: any = null;
+      if (snap && !snap.empty) {
+        const docSnap = snap.docs[0];
+        rec = { id: docSnap.id, ...docSnap.data() };
+      }
+      
+      try {
+        const offRecs = await getOfflineRecords();
+        if (!rec) {
+           const inOffline = offRecs.find(r => r.type === 'IN' && (r?.data?.Date === today || r?.data?.date === today));
+           if (inOffline) {
+             rec = { id: inOffline.id, ...inOffline.data };
+           }
         }
-        
-        try {
-          const offRecs = await getOfflineRecords();
-          if (!rec) {
-             const inOffline = offRecs.find(r => r.type === 'IN' && (r?.data?.Date === today || r?.data?.date === today));
-             if (inOffline) {
-               rec = { id: inOffline.id, ...inOffline.data };
-             }
-          }
-          if (rec) {
-             const outOffline = offRecs.find(r => r.type === 'OUT' && (r?.data?.Date === today || r?.data?.date === today));
-             if (outOffline) {
-               rec = { ...rec, ...outOffline.data };
-             }
-          }
-        } catch(e) {}
-        
-        setAttendanceRecord(rec);
-      });
+        if (rec) {
+           const outOffline = offRecs.find(r => r.type === 'OUT' && (r?.data?.Date === today || r?.data?.date === today));
+           if (outOffline) {
+             rec = { ...rec, ...outOffline.data };
+           }
+        }
+      } catch(e) {}
+      
+      setAttendanceRecord(rec);
     } catch (err) {
       console.error("Error checking attendance:", err);
     }

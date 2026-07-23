@@ -43,30 +43,27 @@ export default function AdminDashboardScreen() {
     const todayStr = new Date().toLocaleDateString('en-CA');
     const attQ = query(collection(db, 'attendance'), where('Date', '==', todayStr));
 
-    let unSubCenters: any;
-    let unSubStaff: any;
-
-    unSubCenters = onSnapshot(collection(db, 'centers'), (cSnap) => {
-      let cTotal = 0, cActive = 0, cInactive = 0;
-      cSnap.forEach(d => {
-        cTotal++;
-        if (d.data().status?.toLowerCase() === 'inactive' || d.data().isDeleted) cInactive++;
-        else cActive++;
-      });
-      setCenterStats({ total: cTotal, active: cActive, inactive: cInactive });
-    });
-
-    unSubStaff = onSnapshot(collection(db, 'staff'), (sSnap) => {
-      let sTotal = 0, sActive = 0, sInactive = 0;
-      sSnap.forEach(d => {
-        sTotal++;
-        if (d.data().status?.toLowerCase() === 'inactive' || d.data().isDeleted) sInactive++;
-        else sActive++;
-      });
-      setStaffStats({ total: sTotal, active: sActive, inactive: sInactive });
-    });
-
     const fetchData = async () => {
+      try {
+        let cTotal = 0, cActive = 0, cInactive = 0;
+        const cSnap = await getDocs(collection(db, 'centers'));
+        cSnap.forEach(d => {
+          cTotal++;
+          if (d.data().status?.toLowerCase() === 'inactive' || d.data().isDeleted) cInactive++;
+          else cActive++;
+        });
+        setCenterStats({ total: cTotal, active: cActive, inactive: cInactive });
+
+        let sTotal = 0, sActive = 0, sInactive = 0;
+        const sSnap = await getDocs(collection(db, 'staff'));
+        sSnap.forEach(d => {
+          sTotal++;
+          if (d.data().status?.toLowerCase() === 'inactive' || d.data().isDeleted) sInactive++;
+          else sActive++;
+        });
+        setStaffStats({ total: sTotal, active: sActive, inactive: sInactive });
+      } catch (e) {}
+
       try {
         const docSnap = await getDoc(doc(db, 'settings', 'appSettings'));
         if (docSnap.exists()) {
@@ -102,14 +99,6 @@ export default function AdminDashboardScreen() {
         });
         
         let failed = 0;
-        try {
-          const logSnap = await getDocs(collection(db, 'system_logs'));
-          logSnap.forEach(d => {
-            if (d.id.startsWith(`autoOut_${todayStr}`) && d.data().status === 'Failed') {
-               failed++;
-            }
-          });
-        } catch(e) {}
 
         setAutoOutStats({ totalAutoOut: autoOut, manualOut: manOut, pendingOut: pendOut, failedOut: failed, centerWise: cWise });
         setTodayCounts(counts as any);
@@ -128,8 +117,6 @@ export default function AdminDashboardScreen() {
 
     fetchData();
     return () => {
-      if (unSubCenters) unSubCenters();
-      if (unSubStaff) unSubStaff();
     };
   }, []);
 

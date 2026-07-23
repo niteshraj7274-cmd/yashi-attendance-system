@@ -41,7 +41,6 @@ export default function AdminProfessionalDashboardScreen() {
     { label: 'Reports and Downloads', icon: Download, path: '/admin/reports', color: 'bg-emerald-700', module: 'all' },
     { label: 'App Update Settings', icon: Download, path: '/admin/update-settings', color: 'bg-indigo-600', module: 'all' },
     { label: 'Audit Logs', icon: FileBarChart, path: '/admin/audit-logs', color: 'bg-orange-600', module: 'all' },
-    { label: 'Settings', icon: Settings, path: '/admin/settings', color: 'bg-gray-700', module: 'all' },
     { label: 'Attendance Guide', icon: BookOpen, path: '/admin/attendance-guide', color: 'bg-teal-700', module: 'all' },
   ].filter(item => item.module === 'all' || appSettings[item.module] !== false);
 

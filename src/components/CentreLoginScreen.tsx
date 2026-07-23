@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Building2, Lock, ChevronDown, RefreshCw } from 'lucide-react';
 import { useSync } from './SyncContext';
 import { motion, AnimatePresence } from 'motion/react';
-import { collection, query, getDocs, doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, getDocs, doc, getDoc, getDocFromCache, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { logAuditActivity } from '../utils/auditHelpers';
 import { useDeviceRegistration } from '../hooks/useDeviceRegistration';
@@ -131,7 +131,13 @@ export default function CentreLoginScreen() {
     setError('');
 
     try {
-      let centerDoc = await getDoc(doc(db, 'centers', selectedCenter));
+      let centerDoc: any;
+      if (!navigator.onLine) {
+         try { centerDoc = await getDocFromCache(doc(db, 'centers', selectedCenter)); } catch(e) {}
+      }
+      if (!centerDoc) {
+         centerDoc = await getDoc(doc(db, 'centers', selectedCenter));
+      }
       let targetCenterId = selectedCenter;
       
       if (!centerDoc.exists()) {

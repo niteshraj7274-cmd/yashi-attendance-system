@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { FileBarChart, ArrowLeft, MapPin, Users, UserCircle, Lock, X , Headset, Calendar, RefreshCw, Bell, LogOut, CheckCircle2, Trash2, BookOpen } from 'lucide-react';
 import { useSync } from './SyncContext';
 import { motion, AnimatePresence } from 'motion/react';
-import { collection, query, getDocs, doc, getDoc, where, onSnapshot, writeBatch, deleteDoc, updateDoc, setDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, getDocs, doc, getDoc, where, onSnapshot, writeBatch, deleteDoc, updateDoc, setDoc, addDoc, serverTimestamp, getDocFromCache, getDocsFromCache } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Staff } from '../types';
 import { getOrCreateDeviceId } from '../utils/deviceUtils';
@@ -261,20 +261,26 @@ export default function CentreStaffSelectionScreen() {
 
       // Check if current device ID is already registered to someone else (Duplicate Detection)
       const currentDeviceRef = doc(db, 'registered_devices', currentDeviceId);
-      const currentDeviceSnap = await getDoc(currentDeviceRef);
+      let currentDeviceSnap: any;
+      if (!navigator.onLine) {
+         try { currentDeviceSnap = await getDocFromCache(currentDeviceRef); } catch(e) {}
+      }
+      if (!currentDeviceSnap) {
+         currentDeviceSnap = await getDoc(currentDeviceRef);
+      }
       
-      if (currentDeviceSnap.exists()) {
+      if (currentDeviceSnap && currentDeviceSnap.exists()) {
          const dData = currentDeviceSnap.data();
          if (dData.staffUid && dData.staffUid !== selectedStaff.id) {
             // Duplicate detected! One device used by multiple staff.
-            await updateDoc(currentDeviceRef, { status: 'Duplicate Detected' });
-            
-            // Log security alert
-            await addDoc(collection(db, 'device_audit_logs'), {
-               deviceId: currentDeviceId, staffName: selectedStaff.name, action: 'Duplicate Device Access Attempt', 
-               reason: `Device already registered to ${dData.staffName}`, timestamp: serverTimestamp()
-            });
-            
+            if (navigator.onLine) {
+              await updateDoc(currentDeviceRef, { status: 'Duplicate Detected' });
+              // Log security alert
+              await addDoc(collection(db, 'device_audit_logs'), {
+                 deviceId: currentDeviceId, staffName: selectedStaff.name, action: 'Duplicate Device Access Attempt', 
+                 reason: `Device already registered to ${dData.staffName}`, timestamp: serverTimestamp()
+              });
+            }
             setPinError('This device is not authorized. Please contact the Administrator.');
             setPinLoading(false);
             return;
@@ -283,7 +289,13 @@ export default function CentreStaffSelectionScreen() {
 
       // Fetch existing device for this specific staff member
       const existingDeviceQ = query(collection(db, 'registered_devices'), where('staffUid', '==', selectedStaff.id));
-      const existingDeviceSnap = await getDocs(existingDeviceQ);
+      let existingDeviceSnap: any;
+      if (!navigator.onLine) {
+         try { existingDeviceSnap = await getDocsFromCache(existingDeviceQ); } catch(e) {}
+      }
+      if (!existingDeviceSnap) {
+         existingDeviceSnap = await getDocs(existingDeviceQ);
+      }
       
       let staffExistingDevice = null;
       if (!existingDeviceSnap.empty) {

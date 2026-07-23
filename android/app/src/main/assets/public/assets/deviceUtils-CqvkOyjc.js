@@ -1,1 +1,0 @@
-function r(){try{let e=localStorage.getItem("deviceId");return(!e||e.trim()===""||e==="null"||e==="undefined")&&(e="DEV_"+Math.random().toString(36).substring(2,10).toUpperCase(),localStorage.setItem("deviceId",e)),e}catch(e){return console.error("Local storage error:",e),"DEV_"+Math.random().toString(36).substring(2,10).toUpperCase()}}export{r as g};

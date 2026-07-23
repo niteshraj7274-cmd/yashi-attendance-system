@@ -6,7 +6,7 @@ import { useSync } from './SyncContext';
 import { logAuditActivity } from '../utils/auditHelpers';
 import { motion } from 'motion/react';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, getDocFromCache } from 'firebase/firestore';
 
 export default function AdminLoginScreen() {
   const navigate = useNavigate();
@@ -102,10 +102,16 @@ export default function AdminLoginScreen() {
     try {
       let validPin = '1999';
       try {
-        const adminDoc = await getDoc(doc(db, 'settings', 'adminProfile'));
-        if (adminDoc.exists() && adminDoc.data().pin) {
+        let adminDoc: any;
+        if (!navigator.onLine) {
+           try { adminDoc = await getDocFromCache(doc(db, 'settings', 'adminProfile')); } catch(e) {}
+        }
+        if (!adminDoc) {
+           adminDoc = await getDoc(doc(db, 'settings', 'adminProfile'));
+        }
+        if (adminDoc && adminDoc.exists() && adminDoc.data().pin) {
           validPin = adminDoc.data().pin;
-        } else {
+        } else if (navigator.onLine) {
           // Create default if not exists
           await setDoc(doc(db, 'settings', 'adminProfile'), { pin: '1999' }, { merge: true });
         }

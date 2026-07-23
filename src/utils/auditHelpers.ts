@@ -35,7 +35,10 @@ export const logAuditActivity = async (
     let ip = extraParams?.ipAddress || '';
     if (!ip) {
        try {
-         const res = await fetch('https://api.ipify.org?format=json');
+         const controller = new AbortController();
+         const timeoutId = setTimeout(() => controller.abort(), 2000);
+         const res = await fetch('https://api.ipify.org?format=json', { signal: controller.signal });
+         clearTimeout(timeoutId);
          const data = await res.json();
          ip = data.ip;
        } catch(e) {}
