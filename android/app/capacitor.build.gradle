@@ -9,11 +9,11 @@ android {
 
 apply from: "../capacitor-cordova-android-plugins/cordova.variables.gradle"
 dependencies {
-    implementation project(':capacitor-community-file-opener')
-    implementation project(':capacitor-app')
-    implementation project(':capacitor-device')
-    implementation project(':capacitor-filesystem')
-    implementation project(':capgo-capacitor-native-biometric')
+    implementation rootProject.project(':capacitor-community-file-opener')
+    implementation rootProject.project(':capacitor-app')
+    implementation rootProject.project(':capacitor-device')
+    implementation rootProject.project(':capacitor-filesystem')
+    implementation rootProject.project(':capgo-capacitor-native-biometric')
 
 }
 
