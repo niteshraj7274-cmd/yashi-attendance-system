@@ -1,8 +1,8 @@
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import ProtectedRoute from './components/ProtectedRoute';
 import JobProtectedRoute from './components/JobProtectedRoute';
-import AdminStorageScreen from './components/AdminStorageScreen';
-import AdminDeviceManagementScreen from './components/AdminDeviceManagementScreen';
+
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -11,6 +11,10 @@ import AdminDeviceManagementScreen from './components/AdminDeviceManagementScree
 import { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import MaintenanceWrapper from './components/MaintenanceWrapper';
+const AdminStorageScreen = lazy(() => import('./components/AdminStorageScreen'));
+const AdminDeviceManagementScreen = lazy(() => import('./components/AdminDeviceManagementScreen'));
+const AutoOutDaemon = lazy(() => import('./components/AutoOutDaemon'));
+const GlobalWelcomeScreen = lazy(() => import('./components/GlobalWelcomeScreen'));
 const SplashScreen = lazy(() => import('./components/SplashScreen'));
 const HomeScreen = lazy(() => import('./components/HomeScreen'));
 const SupportScreen = lazy(() => import('./components/SupportScreen'));
@@ -95,8 +99,8 @@ import ReportClientProtectedRoute from './components/ReportClientProtectedRoute'
 
 const AdminLiveMonitorScreen = lazy(() => import('./components/AdminLiveMonitorScreen'));
 const AdminNotificationsScreen = lazy(() => import('./components/AdminNotificationsScreen'));
-import AutoOutDaemon from "./components/AutoOutDaemon";
-import GlobalWelcomeScreen from "./components/GlobalWelcomeScreen";
+
+
 
 import SessionManager from './components/SessionManager';
 

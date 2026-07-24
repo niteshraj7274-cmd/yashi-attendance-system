@@ -1,1 +1,0 @@
-function t(){try{let t=localStorage.getItem("deviceId");return t&&""!==t.trim()&&"null"!==t&&"undefined"!==t||(t="DEV_"+Math.random().toString(36).substring(2,10).toUpperCase(),localStorage.setItem("deviceId",t)),t}catch(t){return"DEV_"+Math.random().toString(36).substring(2,10).toUpperCase()}}export{t as g};
